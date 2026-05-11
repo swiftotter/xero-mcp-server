@@ -66,6 +66,7 @@ gcloud run deploy "${SVC}" \
   --region="${REGION}" \
   --image="${IMAGE}" \
   --service-account="${RUNNER_SA}" \
+  --port=8000 \
   --no-allow-unauthenticated \
   --min-instances=0 \
   --max-instances=1 \
