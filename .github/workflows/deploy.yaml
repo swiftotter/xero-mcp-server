@@ -15,7 +15,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  GCP_PROJECT: swiftotter-xero-mcp
+  GCP_PROJECT: internal-mcps-496022
   GCP_REGION: us-central1
   ARTIFACT_REPO: xero-mcp
   IMAGE_NAME: server

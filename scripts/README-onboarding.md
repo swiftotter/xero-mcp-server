@@ -20,8 +20,8 @@ The architecture is described in the project root plan at `/Users/bassplayer7/.c
 
 2. **Create the GCP project** and enable APIs:
    ```bash
-   gcloud projects create swiftotter-xero-mcp
-   gcloud config set project swiftotter-xero-mcp
+   gcloud projects create internal-mcps-496022
+   gcloud config set project internal-mcps-496022
    gcloud services enable run.googleapis.com secretmanager.googleapis.com \
      artifactregistry.googleapis.com cloudbuild.googleapis.com
    ```
@@ -40,7 +40,7 @@ The architecture is described in the project root plan at `/Users/bassplayer7/.c
    # Allow it to read the shared app secrets.
    for s in xero-app-id xero-app-secret; do
      gcloud secrets add-iam-policy-binding "$s" \
-       --member="serviceAccount:xero-mcp-runner@swiftotter-xero-mcp.iam.gserviceaccount.com" \
+       --member="serviceAccount:xero-mcp-runner@internal-mcps-496022.iam.gserviceaccount.com" \
        --role="roles/secretmanager.secretAccessor"
    done
    ```
@@ -51,7 +51,7 @@ The architecture is described in the project root plan at `/Users/bassplayer7/.c
      --repository-format=docker --location=us-central1
 
    gcloud builds submit \
-     --tag us-central1-docker.pkg.dev/swiftotter-xero-mcp/xero-mcp/server:latest .
+     --tag us-central1-docker.pkg.dev/internal-mcps-496022/xero-mcp/server:latest .
    ```
 
 ## Per-user onboarding (~3 min/person)
@@ -60,7 +60,7 @@ The architecture is described in the project root plan at `/Users/bassplayer7/.c
    ```bash
    npx tsx bin/xero-oauth-bootstrap.ts \
      --user jesse \
-     --project swiftotter-xero-mcp \
+     --project internal-mcps-496022 \
      --client-id "$(gcloud secrets versions access latest --secret=xero-app-id)" \
      --client-secret "$(gcloud secrets versions access latest --secret=xero-app-secret)"
    ```
@@ -101,7 +101,7 @@ The repo ships two GitHub Actions workflows that run on the SwiftOtter self-host
 
 1. **Create the deployer service account** in the GCP project:
    ```bash
-   PROJECT=swiftotter-xero-mcp
+   PROJECT=internal-mcps-496022
    gcloud iam service-accounts create xero-mcp-deployer \
      --project="$PROJECT" \
      --display-name="xero-mcp GitHub Actions deployer"
@@ -148,7 +148,7 @@ The repo ships two GitHub Actions workflows that run on the SwiftOtter self-host
 
 - **Manual rollout** (without going through CI) — run from a workstation that's authed as the deployer SA (or a human equivalent):
   ```bash
-  ./scripts/redeploy-all.sh us-central1-docker.pkg.dev/swiftotter-xero-mcp/xero-mcp/server:abc1234
+  ./scripts/redeploy-all.sh us-central1-docker.pkg.dev/internal-mcps-496022/xero-mcp/server:abc1234
   ```
 - **Skipping rollout** for a code change that shouldn't ship to production: push to a branch and let `ci.yaml` validate, then squash-merge after review. Only `main` triggers `deploy.yaml`.
 

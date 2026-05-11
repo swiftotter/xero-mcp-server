@@ -5,17 +5,17 @@
 #   ./scripts/redeploy-all.sh <image>
 #
 # Example:
-#   ./scripts/redeploy-all.sh us-central1-docker.pkg.dev/swiftotter-xero-mcp/xero-mcp/server:abc1234
+#   ./scripts/redeploy-all.sh us-central1-docker.pkg.dev/internal-mcps-496022/xero-mcp/server:abc1234
 #
 # Without an arg, defaults to <region>-docker.pkg.dev/<project>/xero-mcp/server:latest.
 #
 # Env (with sensible defaults):
-#   GCP_PROJECT      GCP project ID         (default: swiftotter-xero-mcp)
+#   GCP_PROJECT      GCP project ID         (default: internal-mcps-496022)
 #   GCP_REGION       Cloud Run region       (default: us-central1)
 #   SERVICE_FILTER   gcloud filter expr     (default: metadata.name~^xero-mcp-)
 set -euo pipefail
 
-PROJECT="${GCP_PROJECT:-swiftotter-xero-mcp}"
+PROJECT="${GCP_PROJECT:-internal-mcps-496022}"
 REGION="${GCP_REGION:-us-central1}"
 DEFAULT_IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/xero-mcp/server:latest"
 IMAGE="${1:-${DEFAULT_IMAGE}}"
