@@ -1,14 +1,32 @@
-# Xero MCP Server
+# Xero MCP Server (SwiftOtter fork)
 
-This is a Model Context Protocol (MCP) server implementation for Xero. It provides a bridge between the MCP protocol and Xero's API, allowing for standardized access to Xero's accounting and business features.
+A Model Context Protocol server for Xero. This is SwiftOtter's fork of [XeroAPI/xero-mcp-server](https://github.com/XeroAPI/xero-mcp-server) with a **hosted remote-MCP mode** added on top of the upstream stdio modes.
+
+## Two ways to run it
+
+### 1. SwiftOtter team — remote MCP connector (recommended)
+
+The server is deployed at `https://xero-mcp-1074937591843.us-central1.run.app/mcp`. Every teammate gets there via Claude Desktop's native OAuth connector UI:
+
+> Claude Desktop → **Settings → Connectors → Add custom connector** → paste `https://xero-mcp-1074937591843.us-central1.run.app/mcp` → **Connect** → sign in to Xero in the browser → done.
+
+No CLI, no config-file editing, no tokens to share. Every Xero write is auto-annotated with a History note crediting the real user (since Xero's API attribution always shows the app name in the platform's own audit log).
+
+Operational docs:
+- [`scripts/README-onboarding.md`](scripts/README-onboarding.md) — admin runbook for first-time GCP setup and per-user onboarding
+- [`scripts/DEPLOY.md`](scripts/DEPLOY.md) — what's deployed today, how to ship updates, verification snippets, troubleshooting
+
+### 2. Local stdio (upstream pattern)
+
+Run the server directly inside Claude Desktop via `npx`, talking to Xero with your own Custom Connection or bearer token. See the "Custom Connections" / "Bearer Token" sections below. This is the right path if you're not on SwiftOtter or you want to develop against the server locally.
 
 ## Features
 
-- Xero OAuth2 authentication with custom connections
-- Contact management
-- Chart of Accounts management
-- Invoice creation and management
-- MCP protocol compliance
+- **Hosted remote MCP server** (SwiftOtter fork) with OAuth 2.1 authorization-code flow for Claude Desktop, chained through Xero's OAuth so every user authenticates as themselves
+- **Three auth modes** for the stdio path: Custom Connection (`client_credentials`), bearer token, or authorization-code via Secret Manager (used by the hosted remote-MCP mode)
+- **Per-user audit notes** posted to Xero's History tab on every successful write, naming the authenticated teammate
+- Contact, invoice, credit note, payment, manual journal, quote, item, bank transaction, repeating invoice, attachment, tax rate, tracking category, and read-only reports (P&L, balance sheet, trial balance)
+- MCP protocol compliance (Streamable HTTP + stdio transports)
 
 ## Prerequisites
 
@@ -36,7 +54,7 @@ NOTE: To use Payroll-specific queries, the region should be either NZ or UK.
 
 ### Authentication
 
-There are 2 modes of authentication supported in the Xero MCP server:
+There are 3 modes of authentication supported in the Xero MCP server. The hosted remote-MCP service uses mode 3 internally — modes 1 and 2 are for the upstream stdio pattern (running the server directly inside Claude Desktop via `npx`).
 
 #### 1. Custom Connections
 
@@ -90,6 +108,12 @@ In this case, use the following configuration:
 ```
 
 NOTE: The `XERO_CLIENT_BEARER_TOKEN` will take precedence over the `XERO_CLIENT_ID` if defined.
+
+#### 3. Authorization Code (used by the hosted remote-MCP mode)
+
+When `XERO_APP_CLIENT_ID`, `XERO_APP_CLIENT_SECRET`, and `XERO_REFRESH_TOKEN_SECRET_NAME` are all set, the server uses Xero's full OAuth 2.0 Authorization Code grant with refresh-token rotation. The refresh token is read from (and written back to) GCP Secret Manager at the resource named in `XERO_REFRESH_TOKEN_SECRET_NAME`. This is how the hosted Cloud Run service authenticates each request as the right user — each per-session child gets the caller's secret name in env.
+
+You won't typically configure this mode by hand. It's wired up automatically by `src/cloud-run-entrypoint.ts` + `src/mcp-handler.ts` when the server runs as the shared Cloud Run service. See [`scripts/DEPLOY.md`](scripts/DEPLOY.md) for the deploy.
 
 ##### Required Scopes for Bearer Token
 
