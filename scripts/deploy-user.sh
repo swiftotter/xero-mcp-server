@@ -11,7 +11,7 @@
 # the secret refresh-token-<user> exists in the project's Secret Manager.
 #
 # Required env vars (or edit the defaults below):
-#   GCP_PROJECT      GCP project ID         (default: swiftotter-xero-mcp)
+#   GCP_PROJECT      GCP project ID         (default: internal-mcps-496022)
 #   GCP_REGION       Cloud Run region       (default: us-central1)
 #   IMAGE            Container image ref    (default: ${REGION}-docker.pkg.dev/${PROJECT}/xero-mcp/server:latest)
 #   RUNNER_SA        Cloud Run service acct (default: xero-mcp-runner@${PROJECT}.iam.gserviceaccount.com)
@@ -24,7 +24,7 @@ fi
 
 USER_HANDLE="$1"
 USER_EMAIL="$2"
-PROJECT="${GCP_PROJECT:-swiftotter-xero-mcp}"
+PROJECT="${GCP_PROJECT:-internal-mcps-496022}"
 REGION="${GCP_REGION:-us-central1}"
 IMAGE="${IMAGE:-${REGION}-docker.pkg.dev/${PROJECT}/xero-mcp/server:latest}"
 RUNNER_SA="${RUNNER_SA:-xero-mcp-runner@${PROJECT}.iam.gserviceaccount.com}"
