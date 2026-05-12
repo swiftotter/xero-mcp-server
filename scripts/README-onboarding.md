@@ -15,7 +15,7 @@ The architecture is described in the project root plan at `/Users/bassplayer7/.c
 1. **Register the Xero app** at https://developer.xero.com:
    - Type: **Web app**
    - Redirect URI: `http://localhost:54321/callback`
-   - Scopes: `offline_access` plus everything the server uses today (accounting + payroll set).
+   - Scopes: granular Xero scopes (`accounting.invoices`, `accounting.payments`, `accounting.banktransactions`, `accounting.manualjournals`, `accounting.contacts`, `accounting.settings`, `accounting.attachments`, `accounting.reports.{profitandloss,balancesheet,trialbalance}.read`) plus `openid profile email offline_access`. Broad scopes like `accounting.transactions` and `accounting.reports.read` are deprecated for apps created on or after 2026-03-02 — don't use them.
    - Save the `client_id` and `client_secret`.
 
 2. **Create the GCP project** and enable APIs:

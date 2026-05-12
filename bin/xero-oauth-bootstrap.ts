@@ -17,8 +17,26 @@ import { createHash, randomBytes } from "node:crypto";
 import { createServer } from "node:http";
 import { URL, URLSearchParams } from "node:url";
 
-const DEFAULT_SCOPES =
-  "offline_access accounting.transactions accounting.contacts accounting.settings accounting.reports.read accounting.attachments payroll.settings payroll.employees payroll.timesheets";
+// Granular Xero scopes — required for any app created on or after 2026-03-02.
+// The deprecated broad scopes accounting.transactions and accounting.reports.read
+// no longer work for new apps; this list maps to exactly what the server's
+// handlers touch. See https://developer.xero.com/faq/granular-scopes
+const DEFAULT_SCOPES = [
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+  "accounting.contacts",
+  "accounting.settings",
+  "accounting.attachments",
+  "accounting.invoices",
+  "accounting.payments",
+  "accounting.banktransactions",
+  "accounting.manualjournals",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
+  "accounting.reports.trialbalance.read",
+].join(" ");
 const AUTHORIZE_URL = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
 
