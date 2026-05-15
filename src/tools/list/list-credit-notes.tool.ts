@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { listXeroCreditNotes } from "../../handlers/list-xero-credit-notes.handler.js";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
+import { formatLineItem } from "../../helpers/format-line-item.js";
 
 const ListCreditNotesTool = CreateXeroTool(
   "list-credit-notes",
@@ -67,6 +68,9 @@ const ListCreditNotesTool = CreateXeroTool(
               : null,
             creditNote.updatedDateUTC
               ? `Last Updated: ${creditNote.updatedDateUTC}`
+              : null,
+            creditNote.lineItems?.length
+              ? `Line Items:\n${creditNote.lineItems.map(formatLineItem).join("\n\n")}`
               : null,
           ]
             .filter(Boolean)
