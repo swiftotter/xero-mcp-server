@@ -24,7 +24,7 @@ env:
 jobs:
   build-and-push:
     name: Build & push image
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
       image: ${{ steps.image-ref.outputs.image }}
@@ -80,7 +80,7 @@ jobs:
   rollout:
     name: Roll out the shared xero-mcp service
     needs: build-and-push
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Authenticate to GCP

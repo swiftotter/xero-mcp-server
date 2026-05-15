@@ -10,18 +10,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  cleanup:
-    runs-on: [self-hosted, Linux, X64]
-    steps:
-      - name: Clean up orphaned Docker resources and npm cache
-        run: |
-          docker system prune -af --volumes 2>/dev/null || true
-          npm cache clean --force 2>/dev/null || true
-
   lint-and-build:
     name: Lint & build
-    needs: cleanup
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -46,8 +37,7 @@ jobs:
 
   docker-build:
     name: Docker build
-    needs: cleanup
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Checkout
