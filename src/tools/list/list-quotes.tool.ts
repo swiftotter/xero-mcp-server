@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { listXeroQuotes } from "../../handlers/list-xero-quotes.handler.js";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
+import { formatLineItem } from "../../helpers/format-line-item.js";
 
 const ListQuotesTool = CreateXeroTool(
   "list-quotes",
@@ -64,6 +65,9 @@ const ListQuotesTool = CreateXeroTool(
             quote.currencyRate ? `Currency Rate: ${quote.currencyRate}` : null,
             quote.updatedDateUTC
               ? `Last Updated: ${quote.updatedDateUTC}`
+              : null,
+            quote.lineItems?.length
+              ? `Line Items:\n${quote.lineItems.map(formatLineItem).join("\n\n")}`
               : null,
           ]
             .filter(Boolean)

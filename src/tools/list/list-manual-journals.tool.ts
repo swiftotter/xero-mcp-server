@@ -71,6 +71,9 @@ If they want the next page, call this tool again with the next page number, modi
                       : "No description",
                     line.taxType ? `Tax Type: ${line.taxType}` : "No tax type",
                     `Tax Amount: ${line.taxAmount}`,
+                    line.tracking && line.tracking.length > 0
+                      ? `Tracking: ${JSON.stringify(line.tracking)}`
+                      : null,
                   ]
                     .filter(Boolean)
                     .join("\n")

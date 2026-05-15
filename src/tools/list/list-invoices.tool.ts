@@ -9,6 +9,7 @@ const ListInvoicesTool = CreateXeroTool(
   Ask the user if they want to see invoices for a specific contact, \
   invoice number, or to see all invoices before running. \
   pageSize defaults to 10 and is capped at 100; raise it when scanning many invoices in one call. \
+  Pass lineItems=true (or filter by invoiceNumbers) to include per-line detail and tracking. \
   If a full page is returned, more may exist — call again with page+1.",
   {
     page: z.number(),
@@ -17,6 +18,12 @@ const ListInvoicesTool = CreateXeroTool(
       .array(z.string())
       .optional()
       .describe("If provided, invoice line items will also be returned"),
+    lineItems: z
+      .boolean()
+      .optional()
+      .describe(
+        "If true, include line items (with tracking) for every invoice in the page. Defaults to false unless invoiceNumbers is provided.",
+      ),
     pageSize: z
       .number()
       .int()
@@ -25,7 +32,7 @@ const ListInvoicesTool = CreateXeroTool(
       .optional()
       .describe("Optional page size (1–100). Defaults to 10."),
   },
-  async ({ page, contactIds, invoiceNumbers, pageSize }) => {
+  async ({ page, contactIds, invoiceNumbers, lineItems, pageSize }) => {
     const response = await listXeroInvoices(page, contactIds, invoiceNumbers, pageSize);
     if (response.error !== null) {
       return {
@@ -39,7 +46,7 @@ const ListInvoicesTool = CreateXeroTool(
     }
 
     const invoices = response.result;
-    const returnLineItems = (invoiceNumbers?.length ?? 0) > 0;
+    const returnLineItems = lineItems === true || (invoiceNumbers?.length ?? 0) > 0;
 
     return {
       content: [
