@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 
 import { CreateTools } from "./create/index.js";
 import { DeleteTools } from "./delete/index.js";
@@ -16,29 +17,86 @@ function inferUpdateAction(name: string): WriteAction {
   return "update";
 }
 
+// Category-level annotations. Claude Desktop groups tools by readOnlyHint:
+// readOnly tools land in the "Search & view" group, the rest in the write
+// group. destructiveHint flags the one delete tool so it sorts apart from
+// regular creates/updates.
+const READ_ONLY_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: true,
+  openWorldHint: true,
+};
+const CREATE_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+};
+const UPDATE_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: true,
+};
+const DELETE_ANNOTATIONS: ToolAnnotations = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: true,
+};
+
 export function ToolFactory(server: McpServer) {
 
   DeleteTools.map((tool) => tool())
     .map((tool) => requireWriteConfirmation("delete", tool))
     .forEach((tool) =>
-      server.tool(tool.name, tool.description, tool.schema, tool.handler),
+      server.tool(
+        tool.name,
+        tool.description,
+        tool.schema,
+        DELETE_ANNOTATIONS,
+        tool.handler,
+      ),
     );
   GetTools.map((tool) => tool())
     .forEach((tool) =>
-      server.tool(tool.name, tool.description, tool.schema, tool.handler),
+      server.tool(
+        tool.name,
+        tool.description,
+        tool.schema,
+        READ_ONLY_ANNOTATIONS,
+        tool.handler,
+      ),
     );
   CreateTools.map((tool) => tool())
     .map((tool) => requireWriteConfirmation("create", tool))
     .forEach((tool) =>
-      server.tool(tool.name, tool.description, tool.schema, tool.handler),
+      server.tool(
+        tool.name,
+        tool.description,
+        tool.schema,
+        CREATE_ANNOTATIONS,
+        tool.handler,
+      ),
     );
   ListTools.map((tool) => tool())
     .forEach((tool) =>
-      server.tool(tool.name, tool.description, tool.schema, tool.handler),
+      server.tool(
+        tool.name,
+        tool.description,
+        tool.schema,
+        READ_ONLY_ANNOTATIONS,
+        tool.handler,
+      ),
     );
   UpdateTools.map((tool) => tool())
     .map((tool) => requireWriteConfirmation(inferUpdateAction(tool.name), tool))
     .forEach((tool) =>
-      server.tool(tool.name, tool.description, tool.schema, tool.handler),
+      server.tool(
+        tool.name,
+        tool.description,
+        tool.schema,
+        UPDATE_ANNOTATIONS,
+        tool.handler,
+      ),
     );
 }
