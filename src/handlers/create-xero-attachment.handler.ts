@@ -16,30 +16,63 @@ function expandHome(filePath: string): string {
   return filePath;
 }
 
+const ONE_SOURCE_ERROR =
+  "Provide exactly one of filePath or fileContent (base64).";
+
 function decodeBase64(fileContent: string): Buffer {
   // Tolerate a data URI prefix such as "data:application/pdf;base64,...".
   const comma = fileContent.indexOf(",");
-  const payload =
+  const raw =
     fileContent.startsWith("data:") && comma !== -1
       ? fileContent.slice(comma + 1)
       : fileContent;
-  return Buffer.from(payload, "base64");
+  const normalized = raw.replace(/\s/g, "");
+
+  // Buffer.from(..., "base64") silently drops invalid characters, which would
+  // upload truncated/garbage bytes as a "successful" attachment. Validate first
+  // so a malformed payload fails loudly instead of corrupting the file.
+  if (
+    normalized.length === 0 ||
+    normalized.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)
+  ) {
+    throw new Error(
+      "fileContent is not valid base64. Provide standard base64-encoded " +
+        "file bytes (optionally as a data: URI).",
+    );
+  }
+
+  const body = Buffer.from(normalized, "base64");
+  if (body.length === 0) {
+    throw new Error("fileContent decoded to zero bytes; nothing to upload.");
+  }
+  return body;
 }
 
+// resolveBody owns all input-mode validation: exactly one of filePath /
+// fileContent, plus the rules specific to whichever was supplied.
 async function resolveBody(
   filePath: string | undefined,
   fileContent: string | undefined,
   fileName: string | undefined,
 ): Promise<{ body: Buffer; fileName: string }> {
-  if (fileContent !== undefined) {
+  const hasContent = fileContent !== undefined && fileContent !== "";
+  const hasPath = filePath !== undefined && filePath !== "";
+
+  if (hasContent === hasPath) {
+    throw new Error(ONE_SOURCE_ERROR);
+  }
+
+  if (fileContent !== undefined && fileContent !== "") {
     if (!fileName) {
       throw new Error("fileName is required when uploading via fileContent.");
     }
     return { body: decodeBase64(fileContent), fileName };
   }
 
-  if (filePath === undefined) {
-    throw new Error("Provide exactly one of filePath or fileContent (base64).");
+  // Only filePath remains; re-narrow for TypeScript.
+  if (filePath === undefined || filePath === "") {
+    throw new Error(ONE_SOURCE_ERROR);
   }
 
   const resolvedPath = path.resolve(expandHome(filePath));
@@ -118,19 +151,11 @@ export async function createXeroAttachment(
   includeOnline?: boolean,
 ): Promise<XeroClientResponse<Attachment>> {
   try {
-    const hasPath = filePath !== undefined && filePath !== "";
-    const hasContent = fileContent !== undefined && fileContent !== "";
-    if (hasPath === hasContent) {
-      throw new Error(
-        "Provide exactly one of filePath or fileContent (base64).",
-      );
-    }
-
     const attachment = await uploadAttachment(
       entityType,
       entityId,
-      hasPath ? filePath : undefined,
-      hasContent ? fileContent : undefined,
+      filePath,
+      fileContent,
       fileName,
       includeOnline,
     );
