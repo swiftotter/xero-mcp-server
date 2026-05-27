@@ -5,9 +5,15 @@ import { createXeroAttachment } from "../../handlers/create-xero-attachment.hand
 const CreateAttachmentTool = CreateXeroTool(
   "create-attachment",
   `Upload a file as an attachment on a Xero invoice or bank transaction.
-  The file is read from the local filesystem at filePath (absolute or relative
-  to the server's working directory). If fileName is omitted, the basename of
-  filePath is used.
+
+  Provide the file in ONE of two ways:
+  - fileContent: the file's bytes, base64-encoded. Prefer this — the MCP server is
+    often sandboxed and cannot read local file paths. Requires fileName.
+  - filePath: a path the SERVER can read (absolute, or relative to the server's
+    working directory; a leading ~ is expanded). Only works when the server has
+    filesystem access to that path; otherwise it fails and you should fall back to
+    fileContent. If fileName is omitted, the basename of filePath is used.
+
   includeOnline only applies to invoices and controls whether the attachment
   is shown on the online invoice the customer sees.
   After upload, the entity's hasAttachments flag will be true.`,
@@ -18,16 +24,23 @@ const CreateAttachmentTool = CreateXeroTool(
     entityId: z
       .string()
       .describe("The ID of the invoice or bank transaction to attach the file to."),
+    fileContent: z
+      .string()
+      .optional()
+      .describe(
+        "Base64-encoded file bytes. Preferred: works even when the server cannot read local paths (the sandboxed default). Requires fileName. Provide either fileContent or filePath, not both.",
+      ),
     filePath: z
       .string()
+      .optional()
       .describe(
-        "Path to the file on the local filesystem. May be absolute or relative to the server's working directory.",
+        "Path to a file the SERVER can read (absolute or relative to the server's working directory; a leading ~ is expanded). Only use when the server has filesystem access; otherwise use fileContent. Provide either fileContent or filePath, not both.",
       ),
     fileName: z
       .string()
       .optional()
       .describe(
-        "Optional override for the attachment's stored file name. Defaults to the basename of filePath.",
+        "The attachment's stored file name (e.g. \"confirmation.pdf\"). Required when using fileContent. With filePath, defaults to the basename of the path.",
       ),
     includeOnline: z
       .boolean()
@@ -36,11 +49,12 @@ const CreateAttachmentTool = CreateXeroTool(
         "Invoices only: include the attachment on the online (customer-facing) invoice. Ignored for bank transactions.",
       ),
   },
-  async ({ entityType, entityId, filePath, fileName, includeOnline }) => {
+  async ({ entityType, entityId, fileContent, filePath, fileName, includeOnline }) => {
     const result = await createXeroAttachment(
       entityType,
       entityId,
       filePath,
+      fileContent,
       fileName,
       includeOnline,
     );

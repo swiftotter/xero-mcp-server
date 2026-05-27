@@ -142,3 +142,6 @@ dist
 
 # Cursor IDE
 .cursor/
+
+# SDLC code-review evidence (session-local, not source)
+.code-reviews/
