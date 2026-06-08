@@ -159,6 +159,17 @@ async function main(): Promise<void> {
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
+
+  // Defense-in-depth: a stray rejection/exception from a single session's
+  // transport teardown (which fires outside the Express request lifecycle, so
+  // the error middleware can't catch it) must not crash the instance and take
+  // down every other in-flight session. Log and keep serving.
+  process.on("unhandledRejection", (reason) => {
+    console.error("[entrypoint] unhandledRejection", reason);
+  });
+  process.on("uncaughtException", (err) => {
+    console.error("[entrypoint] uncaughtException", err);
+  });
 }
 
 main().catch((err) => {

@@ -184,7 +184,17 @@ async function openSession(args: {
     });
   };
 
+  // Detach the onclose handlers and guard against re-entry before closing:
+  // closeBoth is registered as BOTH transports' onclose, and closing either
+  // transport fires its onclose. Without this, http.close() -> http.onclose ->
+  // closeBoth -> http.close() ... recurses until the stack overflows and the
+  // unhandled rejection crashes the instance.
+  let closed = false;
   const closeBoth = () => {
+    if (closed) return;
+    closed = true;
+    http.onclose = undefined;
+    stdio.onclose = undefined;
     void http.close().catch(() => undefined);
     void stdio.close().catch(() => undefined);
     if (http.sessionId) sessions.delete(http.sessionId);
