@@ -52,20 +52,17 @@ jobs:
             echo "tag=${TAG}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Submit Cloud Build
-        run: |
-          gcloud builds submit \
-            --project="${{ env.GCP_PROJECT }}" \
-            --tag="${{ steps.image-ref.outputs.image }}" \
-            --quiet
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker "${{ env.GCP_REGION }}-docker.pkg.dev" --quiet
 
-      - name: Tag image as :latest
+      - name: Build and push image
         run: |
-          gcloud artifacts docker tags add \
-            "${{ steps.image-ref.outputs.image }}" \
-            "${{ steps.image-ref.outputs.image_latest }}" \
-            --project="${{ env.GCP_PROJECT }}" \
-            --quiet
+          docker build \
+            -t "${{ steps.image-ref.outputs.image }}" \
+            -t "${{ steps.image-ref.outputs.image_latest }}" \
+            .
+          docker push "${{ steps.image-ref.outputs.image }}"
+          docker push "${{ steps.image-ref.outputs.image_latest }}"
 
       - name: Build summary
         run: |
