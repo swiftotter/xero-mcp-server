@@ -7,7 +7,10 @@ const ListInvoicesTool = CreateXeroTool(
   "list-invoices",
   "List invoices in Xero. This includes Draft, Submitted, and Paid invoices. \
   Ask the user if they want to see invoices for a specific contact, \
-  invoice number, or to see all invoices before running. \
+  invoice number, date range, GL account, or to see all invoices before running. \
+  Use fromDate/toDate (YYYY-MM-DD) to filter by invoice date; this is applied server-side. \
+  Use accountCode to filter to invoices with a line item posting to a GL account code; \
+  this is applied client-side to the current page only, so raise pageSize and page through to scan thoroughly. \
   pageSize defaults to 10 and is capped at 100; raise it when scanning many invoices in one call. \
   Pass lineItems=true (or filter by invoiceNumbers) to include per-line detail and tracking. \
   If a full page is returned, more may exist — call again with page+1.",
@@ -18,6 +21,26 @@ const ListInvoicesTool = CreateXeroTool(
       .array(z.string())
       .optional()
       .describe("If provided, invoice line items will also be returned"),
+    fromDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+      .optional()
+      .describe(
+        "Only invoices dated on/after this date (invoice Date, inclusive).",
+      ),
+    toDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD")
+      .optional()
+      .describe(
+        "Only invoices dated on/before this date (invoice Date, inclusive).",
+      ),
+    accountCode: z
+      .string()
+      .optional()
+      .describe(
+        'Filter to invoices with a line item posting to this GL account code (e.g. "200"). Applied client-side to the current page only, so raise pageSize and page through to scan thoroughly.',
+      ),
     lineItems: z
       .boolean()
       .optional()
@@ -32,8 +55,28 @@ const ListInvoicesTool = CreateXeroTool(
       .optional()
       .describe("Optional page size (1–100). Defaults to 10."),
   },
-  async ({ page, contactIds, invoiceNumbers, lineItems, pageSize }) => {
-    const response = await listXeroInvoices(page, contactIds, invoiceNumbers, pageSize);
+  async ({
+    page,
+    contactIds,
+    invoiceNumbers,
+    fromDate,
+    toDate,
+    accountCode,
+    lineItems,
+    pageSize,
+  }) => {
+    // The account-code filter runs client-side over the fetched page, so when
+    // it's active scan the largest page possible (unless the caller set one).
+    const resolvedPageSize =
+      pageSize ?? (accountCode ? 100 : undefined);
+    const response = await listXeroInvoices(page, {
+      contactIds,
+      invoiceNumbers,
+      fromDate,
+      toDate,
+      accountCode,
+      pageSize: resolvedPageSize,
+    });
     if (response.error !== null) {
       return {
         content: [
@@ -46,13 +89,18 @@ const ListInvoicesTool = CreateXeroTool(
     }
 
     const invoices = response.result;
-    const returnLineItems = lineItems === true || (invoiceNumbers?.length ?? 0) > 0;
+    const returnLineItems =
+      lineItems === true ||
+      (invoiceNumbers?.length ?? 0) > 0 ||
+      accountCode !== undefined;
 
     return {
       content: [
         {
           type: "text" as const,
-          text: `Found ${invoices?.length || 0} invoices:`,
+          text: accountCode
+            ? `Found ${invoices?.length || 0} invoice(s) on this page with a line item on account ${accountCode} (filtered client-side — page through for more):`
+            : `Found ${invoices?.length || 0} invoices:`,
         },
         ...(invoices?.map((invoice) => ({
           type: "text" as const,
