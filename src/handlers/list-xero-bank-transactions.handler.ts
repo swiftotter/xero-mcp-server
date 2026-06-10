@@ -3,17 +3,9 @@ import { BankTransaction } from "xero-node";
 import { getClientHeaders } from "../helpers/get-client-headers.js";
 import { XeroClientResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
+import { toXeroDateTime } from "../helpers/to-xero-datetime.js";
 
 const MAX_PAGE_SIZE = 100;
-
-function toXeroDateTime(iso: string, label: string): string {
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
-  if (!match) {
-    throw new Error(`${label} must be in YYYY-MM-DD format, got "${iso}"`);
-  }
-  const [, y, m, d] = match;
-  return `DateTime(${Number(y)},${Number(m)},${Number(d)})`;
-}
 
 async function getBankTransactions(
   page: number,
