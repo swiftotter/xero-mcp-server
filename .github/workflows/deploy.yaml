@@ -96,6 +96,28 @@ jobs:
             --image="${{ needs.build-and-push.outputs.image }}" \
             --quiet
 
+      - name: Verify rollout
+        run: |
+          LIVE_IMAGE=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
+            --project="${{ env.GCP_PROJECT }}" \
+            --region="${{ env.GCP_REGION }}" \
+            --format="value(spec.template.spec.containers[0].image)")
+          echo "Live image: ${LIVE_IMAGE}"
+          if [ "${LIVE_IMAGE}" != "${{ needs.build-and-push.outputs.image }}" ]; then
+            echo "::error::Live image (${LIVE_IMAGE}) does not match deployed image (${{ needs.build-and-push.outputs.image }})"
+            exit 1
+          fi
+          SERVICE_URL=$(gcloud run services describe "${{ env.SERVICE_NAME }}" \
+            --project="${{ env.GCP_PROJECT }}" \
+            --region="${{ env.GCP_REGION }}" \
+            --format="value(status.url)")
+          STATUS=$(curl -fsS --retry 5 --retry-delay 5 "${SERVICE_URL}/status")
+          echo "/status: ${STATUS}"
+          if ! echo "${STATUS}" | grep -q '"status":"ok"'; then
+            echo "::error::/status health check failed"
+            exit 1
+          fi
+
       - name: Rollout summary
         if: always()
         run: |
