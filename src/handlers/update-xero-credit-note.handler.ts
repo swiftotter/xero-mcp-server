@@ -4,6 +4,7 @@ import { formatError } from "../helpers/format-error.js";
 import { CreditNote, LineItemTracking } from "xero-node";
 import { getClientHeaders } from "../helpers/get-client-headers.js";
 import { postAuditNote } from "../helpers/post-audit-note.js";
+import { wasRecentlyCreatedByCurrentUser } from "../helpers/recently-created-by-claude.js";
 import {
   applyCreditNoteCurrency,
   CreditNoteUpdateExtras,
@@ -79,15 +80,31 @@ export async function updateXeroCreditNote(
   try {
     const existingCreditNote = await getCreditNote(creditNoteId);
 
-    const creditNoteStatus = existingCreditNote?.status;
-
-    // Only allow updates to DRAFT credit notes
-    if (creditNoteStatus !== CreditNote.StatusEnum.DRAFT) {
+    if (!existingCreditNote) {
       return {
         result: null,
         isError: true,
-        error: `Cannot update credit note because it is not a draft. Current status: ${creditNoteStatus}`,
+        error: `Credit note not found: ${creditNoteId}`,
       };
+    }
+
+    const creditNoteStatus = existingCreditNote.status;
+
+    // Only allow updates to DRAFT credit notes, unless the current user
+    // created this credit note via Claude within the last hour (grace window
+    // for fixing mistakes on freshly created non-draft credit notes).
+    if (creditNoteStatus !== CreditNote.StatusEnum.DRAFT) {
+      const recentlyCreated = await wasRecentlyCreatedByCurrentUser(
+        "CreditNote",
+        creditNoteId,
+      );
+      if (!recentlyCreated) {
+        return {
+          result: null,
+          isError: true,
+          error: `Cannot update credit note because it is not a draft (status: ${creditNoteStatus}). Non-draft credit notes can only be edited within 1 hour of being created by you via Claude.`,
+        };
+      }
     }
 
     const updatedCreditNote = await updateCreditNote(

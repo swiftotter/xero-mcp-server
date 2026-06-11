@@ -4,6 +4,7 @@ import { formatError } from "../helpers/format-error.js";
 import { Invoice, LineItemTracking } from "xero-node";
 import { getClientHeaders } from "../helpers/get-client-headers.js";
 import { postAuditNote } from "../helpers/post-audit-note.js";
+import { wasRecentlyCreatedByCurrentUser } from "../helpers/recently-created-by-claude.js";
 import {
   applyInvoiceExtras,
   InvoiceExtras,
@@ -81,15 +82,31 @@ export async function updateXeroInvoice(
   try {
     const existingInvoice = await getInvoice(invoiceId);
 
-    const invoiceStatus = existingInvoice?.status;
-
-    // Only allow updates to DRAFT invoices
-    if (invoiceStatus !== Invoice.StatusEnum.DRAFT) {
+    if (!existingInvoice) {
       return {
         result: null,
         isError: true,
-        error: `Cannot update invoice because it is not a draft. Current status: ${invoiceStatus}`,
+        error: `Invoice not found: ${invoiceId}`,
       };
+    }
+
+    const invoiceStatus = existingInvoice.status;
+
+    // Only allow updates to DRAFT invoices, unless the current user created
+    // this invoice via Claude within the last hour (grace window for fixing
+    // mistakes on freshly created non-draft invoices).
+    if (invoiceStatus !== Invoice.StatusEnum.DRAFT) {
+      const recentlyCreated = await wasRecentlyCreatedByCurrentUser(
+        "Invoice",
+        invoiceId,
+      );
+      if (!recentlyCreated) {
+        return {
+          result: null,
+          isError: true,
+          error: `Cannot update invoice because it is not a draft (status: ${invoiceStatus}). Non-draft invoices can only be edited within 1 hour of being created by you via Claude.`,
+        };
+      }
     }
 
     const updatedInvoice = await updateInvoice(

@@ -28,8 +28,27 @@ export type AuditableResource =
 
 const VIA = "Claude Desktop MCP";
 
+const UNKNOWN_USER = "Unknown user";
+
 function userName(): string {
-  return (process.env.XERO_USER_NAME ?? "").trim() || "Unknown user";
+  return (process.env.XERO_USER_NAME ?? "").trim() || UNKNOWN_USER;
+}
+
+/**
+ * Whether the session carries a real user identity. The upstream session
+ * layer (mcp-handler/oauth-server) substitutes the "Unknown user" sentinel
+ * before setting XERO_USER_NAME, so an anonymous session arrives here with
+ * the sentinel string, not an empty value — both must count as
+ * unauthenticated.
+ */
+export function hasAuthenticatedUserName(): boolean {
+  return userName() !== UNKNOWN_USER;
+}
+
+export function auditNoteDetails(
+  action: "Created" | "Updated" = "Created",
+): string {
+  return `${action} by ${userName()} via ${VIA}`;
 }
 
 export async function postAuditNote(
@@ -38,7 +57,7 @@ export async function postAuditNote(
   action: "Created" | "Updated" = "Created",
 ): Promise<void> {
   if (!resourceId) return;
-  const details = `${action} by ${userName()} via ${VIA}`;
+  const details = auditNoteDetails(action);
   const body: HistoryRecords = {
     historyRecords: [{ details }],
   };

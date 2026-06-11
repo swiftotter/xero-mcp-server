@@ -27,7 +27,8 @@ const lineItemSchema = z.object({
 
 const UpdateInvoiceTool = CreateXeroTool(
   "update-invoice",
-  "Update an invoice in Xero. Only works on draft invoices.\
+  "Update an invoice in Xero. Works on draft invoices; a non-draft invoice \
+  can also be updated within 1 hour of being created by the current user via Claude.\
   All line items must be provided. Any line items not provided will be removed. Including existing line items.\
   Do not modify line items that have not been specified by the user.\
  When an invoice is updated, a deep link to the invoice in Xero is returned. \
