@@ -14,6 +14,11 @@ concurrency:
   group: deploy-xero-mcp
   cancel-in-progress: false
 
+# Least privilege for the workflow token: only repo read is needed (checkout +
+# step summaries). GCP access comes from the SA credential, not GITHUB_TOKEN.
+permissions:
+  contents: read
+
 env:
   GCP_PROJECT: internal-mcps-496022
   GCP_REGION: us-central1
@@ -21,17 +26,31 @@ env:
   IMAGE_NAME: server
   SERVICE_NAME: xero-mcp
 
+# SECURITY: both deploy jobs read secrets.GCP_SA_KEY (a long-lived SA JSON key).
+# Repo-level secrets are readable by a workflow on ANY branch, so anyone who can
+# push a branch could add a workflow that exfiltrates the key or deploys a
+# backdoored image — bypassing the merge-to-main gate. Binding the jobs to the
+# `production` GitHub Environment lets that exposure be closed in repo settings:
+#   1. Settings > Environments > production: add a deployment-branch rule
+#      limiting it to `main` (and, ideally, required reviewers).
+#   2. Move GCP_SA_KEY from a repo secret to a `production` environment secret.
+#   3. Better still, replace the static key with keyless Workload Identity
+#      Federation (google-github-actions/auth with workload_identity_provider)
+#      scoped to repo:swiftotter/xero-mcp-server:ref:refs/heads/main.
 jobs:
   build-and-push:
     name: Build & push image
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    environment: production
     outputs:
       image: ${{ steps.image-ref.outputs.image }}
       digest: ${{ steps.push.outputs.digest || steps.existing.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
@@ -130,6 +149,7 @@ jobs:
     needs: build-and-push
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    environment: production
     steps:
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2

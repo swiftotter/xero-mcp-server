@@ -21,6 +21,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 
 import { XeroChainedOAuthProvider } from "./oauth-server.js";
+import { DISABLE_LOCAL_FILES_ENV } from "./helpers/local-file-access.js";
 
 const SESSION_IDLE_MS = 10 * 60_000;
 const MCP_SESSION_HEADER = "mcp-session-id";
@@ -162,11 +163,15 @@ async function openSession(args: {
     command: process.execPath,
     args: [config.serverEntrypoint],
     env: {
-      ...inheritedEnv(),
+      ...childEnv(),
       XERO_APP_CLIENT_ID: config.xeroAppClientId,
       XERO_APP_CLIENT_SECRET: config.xeroAppClientSecret,
       XERO_REFRESH_TOKEN_SECRET_NAME: `projects/${config.projectId}/secrets/xero-refresh-token-${sub}`,
       XERO_USER_NAME: name,
+      // The child runs untrusted multi-user tool calls and shares the parent's
+      // secrets via its environment. Forbid local-filesystem tool args so a
+      // caller can't read /proc/self/environ or overwrite server code.
+      [DISABLE_LOCAL_FILES_ENV]: "1",
     },
     stderr: "inherit",
   });
@@ -238,10 +243,51 @@ function closeSession(sessions: Map<string, Session>, id: string): void {
   void s.stdio.close().catch(() => undefined);
 }
 
-function inheritedEnv(): Record<string, string> {
+// Env passed through to each per-user child. We deliberately do NOT copy the
+// whole parent process.env: it holds MCP_JWT_SECRET — the HS256 key that signs
+// EVERY user's access token — so leaking it (e.g. via a child reading its own
+// /proc/self/environ) would let an attacker forge tokens for any user. The
+// child authenticates only to Xero and Secret Manager, so it needs system /
+// Node runtime basics plus Google ADC vars (ADC itself works off the metadata
+// server and needs no env). The Xero credentials it needs are set explicitly by
+// the caller; everything sensitive and parent-only is excluded.
+const CHILD_ENV_ALLOWLIST = new Set([
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "TZ",
+  "LANG",
+  "PWD",
+]);
+const CHILD_ENV_ALLOWED_PREFIXES = [
+  "LC_",
+  "NODE_", // NODE_OPTIONS, NODE_EXTRA_CA_CERTS, ...
+  "SSL_", // custom CA roots
+  "GRPC_", // @grpc/grpc-js tuning used by Secret Manager
+  "GOOGLE_", // ADC / project detection
+  "GCLOUD_",
+  "GCP_", // GCP_PROJECT
+  "GCE_", // GCE_METADATA_HOST
+  "GAE_",
+  "CLOUDSDK_",
+  "K_", // Cloud Run-injected K_SERVICE / K_REVISION / ...
+];
+// Never forward these to a child even if a future allowlist entry would match.
+const CHILD_ENV_DENYLIST = new Set(["MCP_JWT_SECRET"]);
+
+function childEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v === "string") out[k] = v;
+    if (typeof v !== "string") continue;
+    if (CHILD_ENV_DENYLIST.has(k)) continue;
+    if (
+      CHILD_ENV_ALLOWLIST.has(k) ||
+      CHILD_ENV_ALLOWED_PREFIXES.some((prefix) => k.startsWith(prefix))
+    ) {
+      out[k] = v;
+    }
   }
   return out;
 }

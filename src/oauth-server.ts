@@ -278,6 +278,7 @@ export class XeroChainedOAuthProvider implements OAuthServerProvider {
     let payload: jwt.JwtPayload;
     try {
       payload = jwt.verify(refreshToken, this.config.jwtSecret, {
+        algorithms: ["HS256"],
         issuer: ISSUER,
         audience: AUDIENCE,
       }) as jwt.JwtPayload;
@@ -296,6 +297,7 @@ export class XeroChainedOAuthProvider implements OAuthServerProvider {
     let payload: jwt.JwtPayload;
     try {
       payload = jwt.verify(token, this.config.jwtSecret, {
+        algorithms: ["HS256"],
         issuer: ISSUER,
         audience: AUDIENCE,
       }) as jwt.JwtPayload;

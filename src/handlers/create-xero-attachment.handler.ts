@@ -7,6 +7,7 @@ import { xeroClient } from "../clients/xero-client.js";
 import { XeroClientResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
 import { getClientHeaders } from "../helpers/get-client-headers.js";
+import { localFileAccessDisabled } from "../helpers/local-file-access.js";
 
 export type AttachmentEntityType = "invoice" | "banktransaction";
 
@@ -73,6 +74,17 @@ async function resolveBody(
   // Only filePath remains; re-narrow for TypeScript.
   if (filePath === undefined || filePath === "") {
     throw new Error(ONE_SOURCE_ERROR);
+  }
+
+  // In the hosted deployment, reading an arbitrary server-side path would let a
+  // caller exfiltrate process secrets (e.g. /proc/self/environ) by uploading
+  // them as an attachment. filePath is only honored where local file access is
+  // intended (local Claude Desktop); otherwise require base64 fileContent.
+  if (localFileAccessDisabled()) {
+    throw new Error(
+      "filePath is not supported on this server: it cannot read local files. " +
+        'Pass the file bytes as base64 via "fileContent" (plus "fileName").',
+    );
   }
 
   const resolvedPath = path.resolve(expandHome(filePath));

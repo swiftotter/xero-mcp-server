@@ -5,6 +5,7 @@ import { xeroClient } from "../clients/xero-client.js";
 import { XeroClientResponse } from "../types/tool-response.js";
 import { formatError } from "../helpers/format-error.js";
 import { getClientHeaders } from "../helpers/get-client-headers.js";
+import { localFileAccessDisabled } from "../helpers/local-file-access.js";
 import { AttachmentEntityType } from "./list-xero-attachments.handler.js";
 
 export type DownloadedAttachment = {
@@ -120,6 +121,22 @@ export async function getXeroAttachment(
   outputPath: string,
 ): Promise<XeroClientResponse<DownloadedAttachment>> {
   try {
+    // This tool writes the attachment to a caller-supplied path. In the hosted
+    // deployment that path is attacker-controlled and the container holds the
+    // server's own code and secrets, so an unconstrained write is an RCE /
+    // overwrite primitive. The written file is also useless to a remote caller.
+    // Only allow it where local file access is intended (local Claude Desktop).
+    if (localFileAccessDisabled()) {
+      return {
+        result: null,
+        isError: true,
+        error:
+          "get-attachment cannot write files on this server (it is sandboxed " +
+          "and the file would be unreachable). This tool is only available in " +
+          "the local Claude Desktop deployment.",
+      };
+    }
+
     await xeroClient.authenticate();
 
     const meta = await lookupAttachmentMeta(entityType, entityId, attachmentId);
