@@ -22,9 +22,11 @@ gcloud run services describe xero-mcp --project=internal-mcps-496022 --region=us
 curl -s https://xero-mcp-1074937591843.us-central1.run.app/status   # -> {"status":"ok"}
 ```
 
-**Manual deploy (fallback, run as a project Owner):**
+**Manual deploy (fallback, run as a project Owner):** same build-on-runner approach as CI — do **not** use `gcloud builds submit`.
 ```bash
 IMG=us-central1-docker.pkg.dev/internal-mcps-496022/xero-mcp/server:$(git rev-parse --short HEAD)
-gcloud builds submit --project=internal-mcps-496022 --tag="$IMG" --quiet
+gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+docker build --platform=linux/amd64 -t "$IMG" .
+docker push "$IMG"
 gcloud run services update xero-mcp --project=internal-mcps-496022 --region=us-central1 --image="$IMG" --quiet
 ```
