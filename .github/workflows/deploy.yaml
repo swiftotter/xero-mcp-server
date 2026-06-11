@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       image_tag:
-        description: 'Image tag to deploy (defaults to current commit SHA)'
+        description: 'Existing image tag to roll out (skips the build — use for rollbacks). Defaults to building the current commit.'
         required: false
         type: string
 
@@ -42,39 +42,60 @@ jobs:
 
       - name: Resolve image tag
         id: image-ref
+        env:
+          INPUT_TAG: ${{ inputs.image_tag }}
         run: |
-          TAG="${{ inputs.image_tag }}"
-          if [ -z "$TAG" ]; then TAG="${GITHUB_SHA::12}"; fi
-          REGISTRY="${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT }}/${{ env.ARTIFACT_REPO }}/${{ env.IMAGE_NAME }}"
+          TAG="${INPUT_TAG}"
+          if [ -z "${TAG}" ]; then TAG="${GITHUB_SHA::12}"; fi
+          if ! [[ "${TAG}" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "::error::image_tag is not a valid Docker tag"
+            exit 1
+          fi
+          REGISTRY="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT}/${ARTIFACT_REPO}/${IMAGE_NAME}"
           {
             echo "image=${REGISTRY}:${TAG}"
             echo "image_latest=${REGISTRY}:latest"
             echo "tag=${TAG}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Submit Cloud Build
-        run: |
-          gcloud builds submit \
-            --project="${{ env.GCP_PROJECT }}" \
-            --tag="${{ steps.image-ref.outputs.image }}" \
-            --quiet
+      # inputs.image_tag is null on push events, and null == '' is true in
+      # Actions expressions — so the build path runs on every push to main,
+      # and only an explicit dispatch tag (rollback) skips it.
+      - name: Configure Docker auth for Artifact Registry
+        if: ${{ inputs.image_tag == '' }}
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
-      - name: Tag image as :latest
+      - name: Build and push image
+        if: ${{ inputs.image_tag == '' }}
+        env:
+          IMAGE: ${{ steps.image-ref.outputs.image }}
+          IMAGE_LATEST: ${{ steps.image-ref.outputs.image_latest }}
         run: |
-          gcloud artifacts docker tags add \
-            "${{ steps.image-ref.outputs.image }}" \
-            "${{ steps.image-ref.outputs.image_latest }}" \
-            --project="${{ env.GCP_PROJECT }}" \
-            --quiet
+          docker build --platform linux/amd64 -t "${IMAGE}" -t "${IMAGE_LATEST}" .
+          docker push "${IMAGE}"
+          docker push "${IMAGE_LATEST}"
+
+      - name: Verify existing image
+        if: ${{ inputs.image_tag != '' }}
+        env:
+          IMAGE: ${{ steps.image-ref.outputs.image }}
+        run: gcloud artifacts docker images describe "${IMAGE}" --quiet
 
       - name: Build summary
+        env:
+          TAG: ${{ steps.image-ref.outputs.tag }}
+          IMAGE: ${{ steps.image-ref.outputs.image }}
+          INPUT_TAG: ${{ inputs.image_tag }}
         run: |
           {
-            echo "## Image built"
+            if [ -n "${INPUT_TAG}" ]; then
+              echo "## Existing image verified (rollout only)"
+            else
+              echo "## Image built"
+            fi
             echo ""
-            echo "- **Tag:** \`${{ steps.image-ref.outputs.tag }}\`"
-            echo "- **Image:** \`${{ steps.image-ref.outputs.image }}\`"
-            echo "- **Also tagged:** \`${{ steps.image-ref.outputs.image_latest }}\`"
+            echo "- **Tag:** \`${TAG}\`"
+            echo "- **Image:** \`${IMAGE}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   rollout:
@@ -92,20 +113,60 @@ jobs:
         uses: google-github-actions/setup-gcloud@v2
 
       - name: Update Cloud Run service to new image
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
         run: |
-          gcloud run services update "${{ env.SERVICE_NAME }}" \
-            --project="${{ env.GCP_PROJECT }}" \
-            --region="${{ env.GCP_REGION }}" \
-            --image="${{ needs.build-and-push.outputs.image }}" \
+          gcloud run services update "${SERVICE_NAME}" \
+            --project="${GCP_PROJECT}" \
+            --region="${GCP_REGION}" \
+            --image="${IMAGE}" \
             --quiet
+
+      - name: Verify rollout
+        env:
+          EXPECTED_IMAGE: ${{ needs.build-and-push.outputs.image }}
+        run: |
+          SERVICE_JSON=$(gcloud run services describe "${SERVICE_NAME}" \
+            --project="${GCP_PROJECT}" \
+            --region="${GCP_REGION}" \
+            --format=json)
+          LATEST_REVISION=$(jq -r '.status.latestReadyRevisionName' <<<"${SERVICE_JSON}")
+          SERVICE_URL=$(jq -r '.status.url' <<<"${SERVICE_JSON}")
+          PERCENT=$(jq -r --arg rev "${LATEST_REVISION}" \
+            '[.status.traffic[] | select(.revisionName == $rev or .latestRevision == true) | .percent] | add // 0' \
+            <<<"${SERVICE_JSON}")
+          LIVE_IMAGE=$(gcloud run revisions describe "${LATEST_REVISION}" \
+            --project="${GCP_PROJECT}" \
+            --region="${GCP_REGION}" \
+            --format="value(spec.containers[0].image)")
+          echo "Latest ready revision: ${LATEST_REVISION}"
+          echo "Revision image: ${LIVE_IMAGE}"
+          echo "Traffic to revision: ${PERCENT}%"
+          if [ "${LIVE_IMAGE}" != "${EXPECTED_IMAGE}" ]; then
+            echo "::error::Latest ready revision is running ${LIVE_IMAGE}, expected ${EXPECTED_IMAGE}"
+            exit 1
+          fi
+          if [ "${PERCENT}" != "100" ]; then
+            echo "::error::Latest ready revision is serving ${PERCENT}% of traffic, expected 100%"
+            exit 1
+          fi
+          STATUS=$(curl -fsS --retry 5 --retry-delay 5 --retry-connrefused --max-time 20 "${SERVICE_URL}/status")
+          echo "/status: ${STATUS}"
+          if ! jq -e '.status == "ok"' <<<"${STATUS}" >/dev/null; then
+            echo "::error::/status health check failed"
+            exit 1
+          fi
 
       - name: Rollout summary
         if: always()
+        env:
+          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          JOB_STATUS: ${{ job.status }}
         run: |
           {
             echo "## Rollout"
             echo ""
-            echo "- **Service:** \`${{ env.SERVICE_NAME }}\`"
-            echo "- **Image:** \`${{ needs.build-and-push.outputs.image }}\`"
-            echo "- **Status:** ${{ job.status }}"
+            echo "- **Service:** \`${SERVICE_NAME}\`"
+            echo "- **Image:** \`${IMAGE}\`"
+            echo "- **Status:** ${JOB_STATUS}"
           } >> "$GITHUB_STEP_SUMMARY"
