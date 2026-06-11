@@ -139,11 +139,17 @@ jobs:
             --project="${GCP_PROJECT}" \
             --region="${GCP_REGION}" \
             --format="value(spec.containers[0].image)")
+          # Cloud Run pins revisions to the image digest, not the tag we
+          # deployed, so compare digests rather than reference strings.
+          EXPECTED_DIGEST=$(gcloud artifacts docker images describe "${EXPECTED_IMAGE}" \
+            --format="value(image_summary.digest)")
+          LIVE_DIGEST="${LIVE_IMAGE##*@}"
           echo "Latest ready revision: ${LATEST_REVISION}"
           echo "Revision image: ${LIVE_IMAGE}"
+          echo "Expected digest: ${EXPECTED_DIGEST}"
           echo "Traffic to revision: ${PERCENT}%"
-          if [ "${LIVE_IMAGE}" != "${EXPECTED_IMAGE}" ]; then
-            echo "::error::Latest ready revision is running ${LIVE_IMAGE}, expected ${EXPECTED_IMAGE}"
+          if [ -z "${EXPECTED_DIGEST}" ] || [ "${LIVE_DIGEST}" != "${EXPECTED_DIGEST}" ]; then
+            echo "::error::Latest ready revision digest (${LIVE_DIGEST}) does not match ${EXPECTED_IMAGE} (${EXPECTED_DIGEST})"
             exit 1
           fi
           if [ "${PERCENT}" != "100" ]; then
