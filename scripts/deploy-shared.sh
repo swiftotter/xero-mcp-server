@@ -53,25 +53,30 @@ for s in xero-app-id xero-app-secret mcp-jwt-secret; do
     --role="roles/secretmanager.secretAccessor" >/dev/null
 done
 
-# 3. Runner SA needs to create + read per-user xero-refresh-token-<sub> secrets
-#    Project-level secretmanager.admin is the simplest path; restricts to the
-#    project only. Acceptable because Secret Manager IAM is per-secret elsewhere
-#    and we don't want to maintain an allowlist of UUIDs.
+# 3. Runner SA needs to create + read per-user xero-refresh-token-<sub> secrets.
+#    Grant secretmanager.admin restricted by an IAM condition to ONLY those
+#    secrets, so a compromise of the public service cannot reach mcp-jwt-secret,
+#    xero-app-secret, or any other project secret.
+#
+#    The condition must reference the secret by its PROJECT NUMBER form
+#    (projects/<number>/secrets/...), which is what Secret Manager evaluates in
+#    resource.name — using the project ID silently matches nothing. We compute
+#    the project number up-front and reuse it for PUBLIC_URL below.
+#
+#    No unconditional fallback: if this binding can't be created we want a loud
+#    failure (set -e), never a silent grant of project-wide Secret Manager admin.
+PROJECT_NUMBER=$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')
+
 gcloud projects add-iam-policy-binding "${PROJECT}" \
   --member="serviceAccount:${RUNNER_SA}" \
   --role="roles/secretmanager.admin" \
-  --condition='expression=resource.name.startsWith("projects/'"${PROJECT}"'/secrets/xero-refresh-token-"),title=xero-refresh-token-only,description=Restrict admin to per-user refresh-token secrets' \
-  >/dev/null 2>&1 || \
-gcloud projects add-iam-policy-binding "${PROJECT}" \
-  --member="serviceAccount:${RUNNER_SA}" \
-  --role="roles/secretmanager.admin" \
-  --condition=None >/dev/null
+  --condition='expression=resource.name.startsWith("projects/'"${PROJECT_NUMBER}"'/secrets/xero-refresh-token-"),title=xero-refresh-token-only,description=Restrict admin to per-user refresh-token secrets' \
+  >/dev/null
 
 # 4. Compute the deterministic Cloud Run URL up-front so the container has a
 #    valid PUBLIC_URL on first boot. Cloud Run gives every service a stable
 #    URL of the form https://<service>-<project-number>.<region>.run.app
 #    (in addition to the randomly-suffixed default URL).
-PROJECT_NUMBER=$(gcloud projects describe "${PROJECT}" --format='value(projectNumber)')
 PUBLIC_URL="https://${SVC}-${PROJECT_NUMBER}.${REGION}.run.app"
 echo "computed PUBLIC_URL=${PUBLIC_URL}"
 

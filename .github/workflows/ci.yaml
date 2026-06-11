@@ -9,6 +9,10 @@ concurrency:
   group: ci-xero-mcp-${{ github.ref }}
   cancel-in-progress: true
 
+# CI only reads the repo; it never needs to write back or use elevated scopes.
+permissions:
+  contents: read
+
 jobs:
   lint-and-build:
     name: Lint & build
@@ -17,6 +21,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -35,6 +41,12 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
 
+      # Enforce the hosted-deployment filesystem guard so a future refactor
+      # (renaming the disable flag, simplifying childEnv) can't silently reopen
+      # the secret-read / file-write holes this protects against.
+      - name: Verify attachment filesystem guard
+        run: npm run verify:fs-guard
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
@@ -42,6 +54,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Build container image (no push)
         run: docker build --pull -t xero-mcp-server:ci-${{ github.sha }} .

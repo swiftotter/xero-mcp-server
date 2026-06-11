@@ -9,3 +9,5 @@ bin
 *.log
 .vscode
 .idea
+gha-creds-*.json
+.claude

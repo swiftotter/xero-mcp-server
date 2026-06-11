@@ -58,15 +58,31 @@ export function ToolFactory(server: McpServer) {
       ),
     );
   GetTools.map((tool) => tool())
-    .forEach((tool) =>
+    .forEach((tool) => {
+      // get-attachment writes a downloaded file to the local filesystem, so it
+      // is NOT read-only: annotate it as a write and route it through the
+      // confirmation gate so a prompt-injected client can't silently overwrite
+      // files on the host. (In the hosted deployment the handler refuses the
+      // write outright.) Every other Get tool is genuinely read-only.
+      if (tool.name === "get-attachment") {
+        const gated = requireWriteConfirmation("create", tool);
+        server.tool(
+          gated.name,
+          gated.description,
+          gated.schema,
+          CREATE_ANNOTATIONS,
+          gated.handler,
+        );
+        return;
+      }
       server.tool(
         tool.name,
         tool.description,
         tool.schema,
         READ_ONLY_ANNOTATIONS,
         tool.handler,
-      ),
-    );
+      );
+    });
   CreateTools.map((tool) => tool())
     .map((tool) => requireWriteConfirmation("create", tool))
     .forEach((tool) =>
