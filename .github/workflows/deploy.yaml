@@ -139,11 +139,19 @@ jobs:
             --project="${GCP_PROJECT}" \
             --region="${GCP_REGION}" \
             --format="value(spec.containers[0].image)")
+          # Cloud Run reports the running image as a digest (repo@sha256:...),
+          # while EXPECTED_IMAGE is the tag we deployed (repo:tag). Resolve the
+          # tag to its digest and compare digests — tag vs digest never matches.
+          EXPECTED_DIGEST=$(gcloud artifacts docker images describe "${EXPECTED_IMAGE}" \
+            --format="value(image_summary.digest)" --quiet)
+          LIVE_DIGEST="${LIVE_IMAGE##*@}"
           echo "Latest ready revision: ${LATEST_REVISION}"
           echo "Revision image: ${LIVE_IMAGE}"
+          echo "Expected digest: ${EXPECTED_DIGEST}"
+          echo "Live digest:     ${LIVE_DIGEST}"
           echo "Traffic to revision: ${PERCENT}%"
-          if [ "${LIVE_IMAGE}" != "${EXPECTED_IMAGE}" ]; then
-            echo "::error::Latest ready revision is running ${LIVE_IMAGE}, expected ${EXPECTED_IMAGE}"
+          if [ -z "${EXPECTED_DIGEST}" ] || [ "${LIVE_DIGEST}" != "${EXPECTED_DIGEST}" ]; then
+            echo "::error::Latest ready revision digest ${LIVE_DIGEST} != expected ${EXPECTED_DIGEST} (image ${EXPECTED_IMAGE})"
             exit 1
           fi
           if [ "${PERCENT}" != "100" ]; then
