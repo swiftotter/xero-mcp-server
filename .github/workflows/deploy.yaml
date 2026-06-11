@@ -28,6 +28,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       image: ${{ steps.image-ref.outputs.image }}
+      digest: ${{ steps.push.outputs.digest || steps.existing.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,6 +57,7 @@ jobs:
             echo "image=${REGISTRY}:${TAG}"
             echo "image_latest=${REGISTRY}:latest"
             echo "tag=${TAG}"
+            echo "registry=${REGISTRY}"
           } >> "$GITHUB_OUTPUT"
 
       # inputs.image_tag is null on push events, and null == '' is true in
@@ -65,8 +67,12 @@ jobs:
         if: ${{ inputs.image_tag == '' }}
         run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
 
+      # The pushed digest is captured locally via docker inspect — the deploy
+      # SA cannot call `gcloud artifacts docker images describe` (it drags in
+      # containeranalysis.occurrences.list, which the SA lacks by design).
       - name: Build and push image
         if: ${{ inputs.image_tag == '' }}
+        id: push
         env:
           IMAGE: ${{ steps.image-ref.outputs.image }}
           IMAGE_LATEST: ${{ steps.image-ref.outputs.image_latest }}
@@ -74,12 +80,33 @@ jobs:
           docker build --platform linux/amd64 -t "${IMAGE}" -t "${IMAGE_LATEST}" .
           docker push "${IMAGE}"
           docker push "${IMAGE_LATEST}"
+          PUSHED=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}")
+          DIGEST="${PUSHED##*@}"
+          if [ -z "${DIGEST}" ] || [ "${DIGEST}" = "${PUSHED}" ]; then
+            echo "::error::could not determine pushed image digest from ${PUSHED}"
+            exit 1
+          fi
+          echo "Pushed digest: ${DIGEST}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Verify existing image
         if: ${{ inputs.image_tag != '' }}
+        id: existing
         env:
-          IMAGE: ${{ steps.image-ref.outputs.image }}
-        run: gcloud artifacts docker images describe "${IMAGE}" --quiet
+          REGISTRY: ${{ steps.image-ref.outputs.registry }}
+          TAG: ${{ steps.image-ref.outputs.tag }}
+        run: |
+          set -o pipefail
+          DIGEST=$(gcloud artifacts docker images list "${REGISTRY}" \
+            --include-tags \
+            --filter="tags=${TAG}" \
+            --format="value(version)" | head -1)
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::image tag ${TAG} not found in ${REGISTRY}"
+            exit 1
+          fi
+          echo "Existing image digest: ${DIGEST}"
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Build summary
         env:
@@ -125,6 +152,7 @@ jobs:
       - name: Verify rollout
         env:
           EXPECTED_IMAGE: ${{ needs.build-and-push.outputs.image }}
+          EXPECTED_DIGEST: ${{ needs.build-and-push.outputs.digest }}
         run: |
           SERVICE_JSON=$(gcloud run services describe "${SERVICE_NAME}" \
             --project="${GCP_PROJECT}" \
@@ -140,9 +168,9 @@ jobs:
             --region="${GCP_REGION}" \
             --format="value(spec.containers[0].image)")
           # Cloud Run pins revisions to the image digest, not the tag we
-          # deployed, so compare digests rather than reference strings.
-          EXPECTED_DIGEST=$(gcloud artifacts docker images describe "${EXPECTED_IMAGE}" \
-            --format="value(image_summary.digest)")
+          # deployed, so compare digests. EXPECTED_DIGEST comes from the build
+          # job (docker inspect / registry list) — the deploy SA cannot call
+          # `gcloud artifacts docker images describe` here.
           LIVE_DIGEST="${LIVE_IMAGE##*@}"
           echo "Latest ready revision: ${LATEST_REVISION}"
           echo "Revision image: ${LIVE_IMAGE}"
