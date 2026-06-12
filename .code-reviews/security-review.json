@@ -1,0 +1,27 @@
+{
+  "pr": 27,
+  "branch": "feature/audit-note-purpose",
+  "reviewed_at": "2026-06-12",
+  "reviewer": "automated-security-review",
+  "result": "PASS",
+  "verdict_summary": "No Medium or above security findings. The diff adds a required `purpose` field to all write tools and threads it into postAuditNote; no new security boundaries are crossed.",
+  "findings": [],
+  "pre_existing_out_of_scope": [
+    {
+      "category": "verification-script-gap",
+      "description": "verify-confirmation-gate.mjs fails 1/10: the script calls create-invoice without the new required `purpose` field, so Zod validation rejects the call before the gate is reached. The gate itself is still working (the with-confirm:true test passes). The script needs its test payload updated to include a `purpose` value, but this is a maintenance issue, not a security bypass."
+    }
+  ],
+  "controls_checked": {
+    "fs_guard": "PASS — verify:fs-guard 3/3; no new fs operations introduced in diff",
+    "confirmation_gate": "PASS (gate intact) — 9/10 script checks pass; 1 failure is due to script not supplying required purpose field (pre-existing script gap), not a gate bypass",
+    "secret_isolation": "PASS — no changes to childEnv(), child transport env, or env allowlist",
+    "auth_session": "PASS — no changes to JWT verification, session handling, or OAuth flow",
+    "write_annotations": "PASS — all changed tools were already write tools; purpose addition does not change readOnlyHint or requireWriteConfirmation gating",
+    "upstream_injection": "PASS — purpose is interpolated into Xero history API (audit note) on the caller's own tenant; same-account operation, below reporting threshold per §2.E/§3",
+    "build": "PASS for changed files — pre-existing TS errors in update-tax-rate, update-tracking-* and tool-definition.ts are unrelated to this diff",
+    "ssrf": "PASS — no new outbound requests with user-controlled hosts",
+    "deploy_iam": "PASS — no changes to workflows or deploy config",
+    "docker_supply_chain": "PASS — no Dockerfile or package.json dependency changes"
+  }
+}
