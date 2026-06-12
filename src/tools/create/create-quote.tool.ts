@@ -34,6 +34,11 @@ const CreateQuoteTool = CreateXeroTool(
     terms: z.string().optional(),
     title: z.string().optional(),
     summary: z.string().optional(),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     contactId,
@@ -43,6 +48,7 @@ const CreateQuoteTool = CreateXeroTool(
     terms,
     title,
     summary,
+    purpose,
   }) => {
     const result = await createXeroQuote(
       contactId,
@@ -52,6 +58,7 @@ const CreateQuoteTool = CreateXeroTool(
       terms,
       title,
       summary,
+      purpose,
     );
     if (result.isError) {
       return {

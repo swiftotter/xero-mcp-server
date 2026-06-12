@@ -77,6 +77,7 @@ export async function updateXeroInvoice(
   date?: string,
   contactId?: string,
   extras?: InvoiceExtras,
+  purpose = "",
 ): Promise<XeroClientResponse<Invoice>> {
   try {
     const existingInvoice = await getInvoice(invoiceId);
@@ -106,7 +107,7 @@ export async function updateXeroInvoice(
       throw new Error("Invoice update failed.");
     }
 
-    await postAuditNote("Invoice", updatedInvoice.invoiceID, "Updated");
+    await postAuditNote("Invoice", updatedInvoice.invoiceID, "Updated", purpose);
 
     return {
       result: updatedInvoice,

@@ -36,9 +36,13 @@ export async function postAuditNote(
   resourceType: AuditableResource,
   resourceId: string | undefined,
   action: "Created" | "Updated" = "Created",
+  purpose = "",
 ): Promise<void> {
   if (!resourceId) return;
-  const details = `${action} by ${userName()} via ${VIA}`;
+  const trimmed = purpose.trim();
+  const details = trimmed
+    ? `${action} by ${userName()} via ${VIA} (${trimmed})`
+    : `${action} by ${userName()} via ${VIA}`;
   const body: HistoryRecords = {
     historyRecords: [{ details }],
   };

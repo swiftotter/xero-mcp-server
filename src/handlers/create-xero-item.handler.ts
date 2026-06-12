@@ -74,13 +74,14 @@ async function createItem(
  * Create an item in Xero
  */
 export async function createXeroItem(
-  itemDetails: ItemDetails
+  itemDetails: ItemDetails,
+  purpose: string
 ): Promise<XeroClientResponse<Item | null>> {
   try {
     const item = await createItem(itemDetails);
 
     if (item) {
-      await postAuditNote("Item", item.itemID, "Created");
+      await postAuditNote("Item", item.itemID, "Created", purpose);
     }
 
     return {

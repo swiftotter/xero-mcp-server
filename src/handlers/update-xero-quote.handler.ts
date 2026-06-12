@@ -92,6 +92,7 @@ export async function updateXeroQuote(
   contactId?: string,
   date?: string,
   expiryDate?: string,
+  purpose = "",
 ): Promise<XeroClientResponse<Quote>> {
   try {
     const existingQuote = await getQuote(quoteId);
@@ -125,7 +126,7 @@ export async function updateXeroQuote(
       throw new Error("Quote update failed.");
     }
 
-    await postAuditNote("Quote", updatedQuote.quoteID, "Updated");
+    await postAuditNote("Quote", updatedQuote.quoteID, "Updated", purpose);
 
 
     return {

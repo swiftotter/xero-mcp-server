@@ -93,6 +93,7 @@ export async function createXeroInvoice(
   date?: string,
   dueDate?: string,
   extras?: InvoiceExtras,
+  purpose = "",
 ): Promise<XeroClientResponse<Invoice>> {
   try {
     const createdInvoice = await createInvoice(
@@ -109,7 +110,7 @@ export async function createXeroInvoice(
       throw new Error("Invoice creation failed.");
     }
 
-    await postAuditNote("Invoice", createdInvoice.invoiceID, "Created");
+    await postAuditNote("Invoice", createdInvoice.invoiceID, "Created", purpose);
 
     return {
       result: createdInvoice,

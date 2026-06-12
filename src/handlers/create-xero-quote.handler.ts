@@ -66,6 +66,7 @@ export async function createXeroQuote(
   terms?: string,
   title?: string,
   summary?: string,
+  purpose = "",
 ): Promise<XeroClientResponse<Quote>> {
   try {
     const createdQuote = await createQuote(
@@ -82,7 +83,7 @@ export async function createXeroQuote(
       throw new Error("Quote creation failed.");
     }
 
-    await postAuditNote("Quote", createdQuote.quoteID, "Created");
+    await postAuditNote("Quote", createdQuote.quoteID, "Created", purpose);
 
 
     return {

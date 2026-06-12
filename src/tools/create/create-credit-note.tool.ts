@@ -53,15 +53,20 @@ const CreateCreditNoteTool = CreateXeroTool(
       .string()
       .optional()
       .describe("Branding theme ID — controls which template Xero renders."),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
-  async ({ contactId, lineItems, reference, type, date, currencyCode, currencyRate, brandingThemeID }) => {
+  async ({ contactId, lineItems, reference, type, date, currencyCode, currencyRate, brandingThemeID, purpose }) => {
     const result = await createXeroCreditNote(contactId, lineItems, reference, {
       type,
       date,
       currencyCode,
       currencyRate,
       brandingThemeID,
-    });
+    }, purpose);
     if (result.isError) {
       return {
         content: [

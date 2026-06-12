@@ -65,13 +65,14 @@ async function updateItem(
  */
 export async function updateXeroItem(
   itemId: string,
-  itemDetails: ItemDetails
+  itemDetails: ItemDetails,
+  purpose: string
 ): Promise<XeroClientResponse<Item | null>> {
   try {
     const item = await updateItem(itemId, itemDetails);
 
     if (item) {
-      await postAuditNote("Item", item.itemID, "Updated");
+      await postAuditNote("Item", item.itemID, "Updated", purpose);
     }
 
     return {

@@ -28,6 +28,7 @@ export interface UpdateRepeatingInvoiceInput {
   sendCopy?: boolean;
   markAsSent?: boolean;
   includePDF?: boolean;
+  purpose: string;
 }
 
 function buildSchedule(input: RepeatingInvoiceScheduleInput): Schedule {
@@ -107,7 +108,7 @@ export async function updateXeroRepeatingInvoice(
       throw new Error("Repeating invoice update failed.");
     }
 
-    await postAuditNote("RepeatingInvoice", updated.repeatingInvoiceID, "Updated");
+    await postAuditNote("RepeatingInvoice", updated.repeatingInvoiceID, "Updated", input.purpose);
 
 
     return {
