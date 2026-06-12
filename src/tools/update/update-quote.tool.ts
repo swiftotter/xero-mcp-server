@@ -42,6 +42,11 @@ const UpdateQuoteTool = CreateXeroTool(
     contactId: z.string().optional(),
     date: z.string().optional(),
     expiryDate: z.string().optional(),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async (
     {
@@ -55,6 +60,7 @@ const UpdateQuoteTool = CreateXeroTool(
       contactId,
       date,
       expiryDate,
+      purpose,
     }
   ) => {
     const result = await updateXeroQuote(
@@ -68,6 +74,7 @@ const UpdateQuoteTool = CreateXeroTool(
       contactId,
       date,
       expiryDate,
+      purpose,
     );
     if (result.isError) {
       return {

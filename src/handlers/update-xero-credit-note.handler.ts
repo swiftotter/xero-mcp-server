@@ -75,6 +75,7 @@ export async function updateXeroCreditNote(
   contactId?: string,
   date?: string,
   extras?: CreditNoteUpdateExtras,
+  purpose = "",
 ): Promise<XeroClientResponse<CreditNote>> {
   try {
     const existingCreditNote = await getCreditNote(creditNoteId);
@@ -103,7 +104,7 @@ export async function updateXeroCreditNote(
       throw new Error("Credit note update failed.");
     }
 
-    await postAuditNote("CreditNote", updatedCreditNote.creditNoteID, "Updated");
+    await postAuditNote("CreditNote", updatedCreditNote.creditNoteID, "Updated", purpose);
 
 
     return {

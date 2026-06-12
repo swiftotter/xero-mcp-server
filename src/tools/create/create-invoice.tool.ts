@@ -63,6 +63,11 @@ const CreateInvoiceTool = CreateXeroTool(
       .number()
       .optional()
       .describe("Exchange rate to org base currency. Only needed for foreign-currency invoices."),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     contactId,
@@ -76,6 +81,7 @@ const CreateInvoiceTool = CreateXeroTool(
     plannedPaymentDate,
     currencyCode,
     currencyRate,
+    purpose,
   }) => {
     const xeroInvoiceType = type === "ACCREC" ? Invoice.TypeEnum.ACCREC : Invoice.TypeEnum.ACCPAY;
     const result = await createXeroInvoice(
@@ -92,6 +98,7 @@ const CreateInvoiceTool = CreateXeroTool(
         currencyCode,
         currencyRate,
       },
+      purpose,
     );
     if (result.isError) {
       return {

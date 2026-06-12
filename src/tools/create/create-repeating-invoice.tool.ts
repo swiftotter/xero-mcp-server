@@ -82,6 +82,11 @@ For auto-emailed retainers, set markAsSent + sendCopy + includePDF and AUTHORISE
     sendCopy: z.boolean().optional().describe("Send a copy of generated invoices to the sender's email."),
     markAsSent: z.boolean().optional().describe("Mark generated invoices as 'sent' in Xero."),
     includePDF: z.boolean().optional().describe("Attach a PDF to auto-emailed generated invoices."),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     contactId,
@@ -96,6 +101,7 @@ For auto-emailed retainers, set markAsSent + sendCopy + includePDF and AUTHORISE
     sendCopy,
     markAsSent,
     includePDF,
+    purpose,
   }) => {
     const response = await createXeroRepeatingInvoice({
       contactId,
@@ -110,6 +116,7 @@ For auto-emailed retainers, set markAsSent + sendCopy + includePDF and AUTHORISE
       sendCopy,
       markAsSent,
       includePDF,
+      purpose,
     });
 
     if (response.isError) {

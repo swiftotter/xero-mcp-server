@@ -71,6 +71,7 @@ export async function createXeroManualJournal(
   status?: ManualJournal.StatusEnum,
   url?: string,
   showOnCashBasisReports?: boolean,
+  purpose: string = "",
 ): Promise<XeroClientResponse<ManualJournal>> {
   try {
     const createdManualJournal = await createManualJournal(
@@ -87,7 +88,7 @@ export async function createXeroManualJournal(
       throw new Error("Manual journal creation failed.");
     }
 
-    await postAuditNote("ManualJournal", createdManualJournal.manualJournalID, "Created");
+    await postAuditNote("ManualJournal", createdManualJournal.manualJournalID, "Created", purpose);
 
 
     return {

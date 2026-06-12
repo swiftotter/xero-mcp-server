@@ -73,6 +73,11 @@ const CreateManualJournalTool = CreateXeroTool(
       .describe(
         "Optional boolean to show on cash basis reports, default is true",
       ),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async (args) => {
     try {
@@ -84,6 +89,7 @@ const CreateManualJournalTool = CreateXeroTool(
         args.status as ManualJournal.StatusEnum | undefined,
         args.url,
         args.showOnCashBasisReports,
+        args.purpose,
       );
 
       if (response.isError) {

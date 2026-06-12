@@ -62,6 +62,7 @@ export async function updateXeroManualJournal(
   status?: ManualJournal.StatusEnum,
   url?: string,
   showOnCashBasisReports?: boolean,
+  purpose: string = "",
 ): Promise<XeroClientResponse<ManualJournal>> {
   try {
     const updatedManualJournal = await updateManualJournal(
@@ -79,7 +80,7 @@ export async function updateXeroManualJournal(
       throw new Error("Manual journal update failed.");
     }
 
-    await postAuditNote("ManualJournal", updatedManualJournal.manualJournalID, "Updated");
+    await postAuditNote("ManualJournal", updatedManualJournal.manualJournalID, "Updated", purpose);
 
 
     return {

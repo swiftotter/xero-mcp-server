@@ -27,6 +27,11 @@ const UpdateItemTool = CreateXeroTool(
     salesDetails: salesDetailsSchema.optional(),
     isTrackedAsInventory: z.boolean().optional(),
     inventoryAssetAccountCode: z.string().optional(),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     itemId,
@@ -38,6 +43,7 @@ const UpdateItemTool = CreateXeroTool(
     salesDetails,
     isTrackedAsInventory,
     inventoryAssetAccountCode,
+    purpose,
   }) => {
     const result = await updateXeroItem(
       itemId,
@@ -50,7 +56,8 @@ const UpdateItemTool = CreateXeroTool(
         salesDetails,
         isTrackedAsInventory,
         inventoryAssetAccountCode,
-      }
+      },
+      purpose
     );
 
     if (result.isError) {

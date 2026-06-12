@@ -148,6 +148,7 @@ export async function updateXeroContact(
   postalAddress?: Address,
   contactPersons?: ContactPerson[],
   extras?: ContactExtras,
+  purpose = "",
 ): Promise<XeroClientResponse<Contact>> {
   try {
     const updatedContact = await updateContact(
@@ -167,7 +168,7 @@ export async function updateXeroContact(
       throw new Error("Contact update failed.");
     }
 
-    await postAuditNote("Contact", updatedContact.contactID, "Updated");
+    await postAuditNote("Contact", updatedContact.contactID, "Updated", purpose);
 
 
     return {

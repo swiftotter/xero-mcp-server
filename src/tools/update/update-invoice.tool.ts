@@ -65,6 +65,11 @@ const UpdateInvoiceTool = CreateXeroTool(
       .number()
       .optional()
       .describe("Exchange rate to org base currency. Only needed for foreign-currency invoices."),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     invoiceId,
@@ -78,6 +83,7 @@ const UpdateInvoiceTool = CreateXeroTool(
     plannedPaymentDate,
     currencyCode,
     currencyRate,
+    purpose,
   }) => {
     const result = await updateXeroInvoice(
       invoiceId,
@@ -93,6 +99,7 @@ const UpdateInvoiceTool = CreateXeroTool(
         currencyCode,
         currencyRate,
       },
+      purpose,
     );
     if (result.isError) {
       return {

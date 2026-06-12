@@ -63,6 +63,11 @@ Set status to AUTHORISED to start generating invoices, DRAFT to pause, or DELETE
     sendCopy: z.boolean().optional(),
     markAsSent: z.boolean().optional(),
     includePDF: z.boolean().optional(),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     repeatingInvoiceID,
@@ -78,6 +83,7 @@ Set status to AUTHORISED to start generating invoices, DRAFT to pause, or DELETE
     sendCopy,
     markAsSent,
     includePDF,
+    purpose,
   }) => {
     const response = await updateXeroRepeatingInvoice({
       repeatingInvoiceID,
@@ -93,6 +99,7 @@ Set status to AUTHORISED to start generating invoices, DRAFT to pause, or DELETE
       sendCopy,
       markAsSent,
       includePDF,
+      purpose,
     });
 
     if (response.isError) {

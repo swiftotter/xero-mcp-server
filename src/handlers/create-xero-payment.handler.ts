@@ -16,6 +16,7 @@ type PaymentProps = {
   particulars?: string;
   details?: string;
   code?: string;
+  purpose: string;
 };
 
 async function createPayment({
@@ -73,6 +74,7 @@ export async function createXeroPayment({
   particulars,
   details,
   code,
+  purpose,
 }: PaymentProps): Promise<XeroClientResponse<Payment>> {
   try {
     const createdPayment = await createPayment({
@@ -86,13 +88,14 @@ export async function createXeroPayment({
       particulars,
       details,
       code,
+      purpose,
     });
 
     if (!createdPayment) {
       throw new Error("Payment creation failed.");
     }
 
-    await postAuditNote("Payment", createdPayment.paymentID, "Created");
+    await postAuditNote("Payment", createdPayment.paymentID, "Created", purpose);
 
 
     return {

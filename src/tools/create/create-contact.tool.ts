@@ -110,6 +110,11 @@ const CreateContactTool = CreateXeroTool(
       .string()
       .optional()
       .describe("Default purchases account code (from list-accounts)."),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     name,
@@ -132,6 +137,7 @@ const CreateContactTool = CreateXeroTool(
     purchasesDefaultLineAmountType,
     salesDefaultAccountCode,
     purchasesDefaultAccountCode,
+    purpose,
   }) => {
     try {
       const response = await createXeroContact(
@@ -157,6 +163,7 @@ const CreateContactTool = CreateXeroTool(
           salesDefaultAccountCode,
           purchasesDefaultAccountCode,
         },
+        purpose,
       );
       if (response.isError) {
         return {

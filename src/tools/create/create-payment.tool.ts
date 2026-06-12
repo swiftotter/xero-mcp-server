@@ -51,6 +51,11 @@ const CreatePaymentTool = CreateXeroTool(
       .string()
       .optional()
       .describe("NZ/AU bank-transfer field. Leave blank for US payments."),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async ({
     invoiceId,
@@ -63,6 +68,7 @@ const CreatePaymentTool = CreateXeroTool(
     particulars,
     details,
     code,
+    purpose,
   }) => {
     const result = await createXeroPayment({
       invoiceId,
@@ -75,6 +81,7 @@ const CreatePaymentTool = CreateXeroTool(
       particulars,
       details,
       code,
+      purpose,
     });
     if (result.isError) {
       return {

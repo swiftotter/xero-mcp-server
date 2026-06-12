@@ -49,6 +49,7 @@ export interface CreateRepeatingInvoiceInput {
   sendCopy?: boolean;
   markAsSent?: boolean;
   includePDF?: boolean;
+  purpose: string;
 }
 
 function buildSchedule(input: RepeatingInvoiceScheduleInput): Schedule {
@@ -125,7 +126,7 @@ export async function createXeroRepeatingInvoice(
       throw new Error("Repeating invoice creation failed.");
     }
 
-    await postAuditNote("RepeatingInvoice", created.repeatingInvoiceID, "Created");
+    await postAuditNote("RepeatingInvoice", created.repeatingInvoiceID, "Created", input.purpose);
 
 
     return {

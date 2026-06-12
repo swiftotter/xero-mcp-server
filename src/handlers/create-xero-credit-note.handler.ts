@@ -89,6 +89,7 @@ export async function createXeroCreditNote(
   lineItems: CreditNoteLineItem[],
   reference?: string,
   extras?: CreditNoteCreateExtras,
+  purpose = "",
 ): Promise<XeroClientResponse<CreditNote>> {
   try {
     const createdCreditNote = await createCreditNote(
@@ -102,7 +103,7 @@ export async function createXeroCreditNote(
       throw new Error("Credit note creation failed.");
     }
 
-    await postAuditNote("CreditNote", createdCreditNote.creditNoteID, "Created");
+    await postAuditNote("CreditNote", createdCreditNote.creditNoteID, "Created", purpose);
 
 
     return {

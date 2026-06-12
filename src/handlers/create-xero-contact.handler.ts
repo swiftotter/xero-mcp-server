@@ -152,6 +152,7 @@ export async function createXeroContact(
   streetAddress?: AddressInput,
   contactPersons?: ContactPerson[],
   extras?: ContactExtras,
+  purpose = "",
 ): Promise<XeroClientResponse<Contact>> {
   try {
     const createdContact = await createContact(
@@ -170,7 +171,7 @@ export async function createXeroContact(
       throw new Error("Contact creation failed.");
     }
 
-    await postAuditNote("Contact", createdContact.contactID, "Created");
+    await postAuditNote("Contact", createdContact.contactID, "Created", purpose);
 
 
     return {

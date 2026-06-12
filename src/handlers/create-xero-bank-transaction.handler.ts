@@ -62,16 +62,17 @@ export async function createXeroBankTransaction(
   contactId: string,
   lineItems: BankTransactionLineItem[],
   reference?: string,
-  date?: string
+  date?: string,
+  purpose = ""
 ): Promise<XeroClientResponse<BankTransaction>> {
   try {
     const createdTransaction = await createBankTransaction(type, bankAccountId, contactId, lineItems, reference, date);
-  
+
     if (!createdTransaction) {
       throw new Error("Bank transaction creation failed.");
     }
 
-    await postAuditNote("BankTransaction", createdTransaction.bankTransactionID, "Created");
+    await postAuditNote("BankTransaction", createdTransaction.bankTransactionID, "Created", purpose);
 
 
     return {

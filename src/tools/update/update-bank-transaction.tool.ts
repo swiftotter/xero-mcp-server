@@ -35,7 +35,12 @@ const UpdateBankTransactionTool = CreateXeroTool(
       Do not modify line items that have not been specified by the user",
     ),
     reference: z.string().optional(),
-    date: z.string().optional()
+    date: z.string().optional(),
+    purpose: z
+      .string()
+      .min(1)
+      .max(120)
+      .describe("In a few words describe why this is needed. Note to auditor."),
   },
   async (
     {
@@ -44,10 +49,11 @@ const UpdateBankTransactionTool = CreateXeroTool(
       contactId,
       lineItems,
       reference,
-      date
+      date,
+      purpose
     }
   ) => {
-    const result = await updateXeroBankTransaction(bankTransactionId, type, contactId, lineItems, reference, date);
+    const result = await updateXeroBankTransaction(bankTransactionId, type, contactId, lineItems, reference, date, purpose);
 
     if (result.isError) {
       return {

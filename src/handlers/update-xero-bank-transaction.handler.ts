@@ -66,7 +66,8 @@ export async function updateXeroBankTransaction(
   contactId?: string,
   lineItems?: BankTransactionLineItem[],
   reference?: string,
-  date?: string
+  date?: string,
+  purpose = ""
 ): Promise<XeroClientResponse<BankTransaction>> {
   try {
     const existingBankTransaction = await getBankTransaction(bankTransactionId);
@@ -89,7 +90,7 @@ export async function updateXeroBankTransaction(
       throw new Error(`Failed to update bank transaction`);
     }
 
-    await postAuditNote("BankTransaction", updatedBankTransaction.bankTransactionID, "Updated");
+    await postAuditNote("BankTransaction", updatedBankTransaction.bankTransactionID, "Updated", purpose);
 
 
     return {
