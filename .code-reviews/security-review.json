@@ -1,0 +1,26 @@
+{
+  "pr": 28,
+  "branch": "feature/edit-recent-claude-created-records",
+  "base": "main",
+  "head_sha": "43d1c0b42baf6f43dda581fdadf5ff197cb41f45",
+  "reviewed_at": "2026-06-12T00:00:00Z",
+  "result": "PASS",
+  "findings": [],
+  "gates": {
+    "lint": "PASS",
+    "build": "PASS",
+    "verify_fs_guard": "PASS (3/3)",
+    "verify_confirmation_gate": "PASS (10/10)"
+  },
+  "analysis": {
+    "A_filesystem_access": "No filesystem paths derived from tool arguments in this diff. Not applicable.",
+    "B_secret_isolation": "No changes to childEnv() or child environment construction. recently-created-by-claude.ts reads XERO_USER_NAME (per-user env var, not the signing secret). PASS.",
+    "C_write_tool_gating": "update-invoice and update-credit-note remain write tools; only description text changed. verify-confirmation-gate 10/10 including update-invoice. PASS.",
+    "D_authn_authz": "wasRecentlyCreatedByCurrentUser: (1) hasAuthenticatedUserName() guard blocks anonymous/Unknown-user sessions from cross-matching; (2) identity matched against XERO_USER_NAME, a trusted per-session env var set by the session handler; (3) fails closed on any API error. This is a change-control rail (§3.2), not an authorization boundary — updates still run under the caller's own per-user Xero OAuth token, so no cross-user security boundary is crossed (§3.1). Display-name uniqueness limitation is documented and accepted. PASS.",
+    "E_query_injection": "resourceId used as a typed SDK path parameter, not interpolated into a query/filter DSL. Same-tenant scope; below threshold even if injectable (§2.E, §4). PASS.",
+    "F_ssrf": "No new outbound requests with user-controlled host or protocol. PASS.",
+    "G_deploy_iam": "No changes to deploy scripts or GitHub Actions workflows. PASS.",
+    "H_docker_build": "No changes to Dockerfile, .dockerignore, package.json dependencies, or lifecycle scripts. PASS."
+  },
+  "pre_existing_notes": "None observed in the diff scope."
+}
