@@ -30,7 +30,13 @@ import type {
 
 import { DISABLE_LOCAL_FILES_ENV } from "./helpers/local-file-access.js";
 
-const DEFAULT_MAX_CHILDREN = 16;
+// Each child is a full Node process (secret-manager + axios + xero-node), so
+// resident memory, not CPU, is the binding constraint on the single 2Gi instance.
+// Keep this conservative and size it against MEASURED per-child RSS; raise via the
+// MCP_MAX_CHILDREN env var (or bump instance memory) once that's known. When the
+// cap is hit the pool rejects with POOL_BUSY rather than risking an OOM SIGKILL,
+// which would mass-disconnect every active user on the instance.
+const DEFAULT_MAX_CHILDREN = 10;
 const DEFAULT_IDLE_TTL_MS = 10 * 60_000;
 const REAP_INTERVAL_MS = 60_000;
 
@@ -229,6 +235,7 @@ export class ChildPool {
     } catch (err) {
       handle.dispose();
       const detail = (err as Error)?.message ?? String(err);
+      console.error("[child-pool] spawn failed", { sub, detail });
       throw new ChildPoolError(
         `Failed to start Xero MCP child for this user: ${detail}`,
         SPAWN_FAILED_CODE,
@@ -240,11 +247,18 @@ export class ChildPool {
     handle.instructions = client.getInstructions();
 
     this.children.set(sub, handle);
+    console.log("[child-pool] child ready", {
+      sub,
+      pid: transport.pid,
+      size: this.children.size,
+    });
     return handle;
   }
 
   private enforceCapacity(): void {
-    if (this.children.size < this.maxChildren) return;
+    // Count in-flight spawns too (they aren't in `children` yet) so a burst of
+    // distinct new users can't overshoot the cap.
+    if (this.children.size + this.pending.size < this.maxChildren) return;
     // At capacity: evict the least-recently-used IDLE child to make room.
     let lru: ChildHandle | undefined;
     for (const handle of this.children.values()) {
@@ -252,11 +266,18 @@ export class ChildPool {
       if (!lru || handle.lastActivityAt < lru.lastActivityAt) lru = handle;
     }
     if (lru) {
+      console.log("[child-pool] evicting idle LRU child for capacity", {
+        sub: lru.sub,
+        max: this.maxChildren,
+      });
       lru.dispose();
       return;
     }
     // Every child is busy — refuse rather than OOM-kill the instance, which
     // would mass-disconnect every active user on it.
+    console.warn("[child-pool] at capacity, rejecting request", {
+      max: this.maxChildren,
+    });
     throw new ChildPoolError(
       `server busy: ${this.maxChildren} users active, retry shortly`,
       POOL_BUSY_CODE,
@@ -267,6 +288,7 @@ export class ChildPool {
     const now = Date.now();
     for (const handle of this.children.values()) {
       if (handle.inFlight === 0 && now - handle.lastActivityAt > this.idleTtlMs) {
+        console.log("[child-pool] reaping idle child", { sub: handle.sub });
         handle.dispose();
       }
     }

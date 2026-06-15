@@ -44,6 +44,7 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
   private currentRefreshToken: string | null = null;
   private accessTokenExpiresAt = 0;
   private latestVersionName: string | null = null;
+  private authInFlight: Promise<void> | null = null;
 
   constructor(config: {
     clientId: string;
@@ -61,6 +62,29 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
   }
 
   public async authenticate(): Promise<void> {
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (
+      this.tenantId &&
+      this.accessTokenExpiresAt > nowSec + ACCESS_TOKEN_REFRESH_BUFFER_SECONDS
+    ) {
+      return;
+    }
+
+    // Serialize refresh: this user's child can receive concurrent relayed tool
+    // calls (Claude issues parallel tool_use). Xero rotates the refresh token on
+    // every refresh and the old one dies, so two callers refreshing at once would
+    // race the rotation and one would get invalid_grant. Share a single in-flight
+    // refresh instead.
+    if (this.authInFlight) return this.authInFlight;
+    this.authInFlight = this.refreshAndUpdate().finally(() => {
+      this.authInFlight = null;
+    });
+    return this.authInFlight;
+  }
+
+  private async refreshAndUpdate(): Promise<void> {
+    // Re-check inside the critical section: a refresh we queued behind may have
+    // just populated a valid token.
     const nowSec = Math.floor(Date.now() / 1000);
     if (
       this.tenantId &&

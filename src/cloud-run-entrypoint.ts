@@ -5,7 +5,7 @@
  *   - GET /healthz (open)
  *   - GET /callback (Xero redirect target)
  *   - MCP SDK auth router (/authorize, /token, /register, /revoke, /.well-known)
- *   - JWT-gated MCP transport routes (/sse, /message)
+ *   - JWT-gated, stateless MCP transport route (POST/GET/DELETE /mcp)
  *
  * Env vars (all required):
  *   PUBLIC_URL                       — outward-facing URL of this service (e.g. https://xero-mcp-xxx.run.app)
@@ -56,7 +56,7 @@ function corsMiddleware(
   if (typeof origin === "string" && ALLOWED_ORIGINS.has(origin)) {
     res.setHeader("Access-Control-Allow-Origin", origin);
     res.setHeader("Vary", "Origin");
-    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, MCP-Protocol-Version");
   }
   if (req.method === "OPTIONS") {
@@ -150,14 +150,22 @@ async function main(): Promise<void> {
     console.log(`[entrypoint] listening on port ${port}, public URL ${publicUrl}`);
   });
 
+  let shuttingDown = false;
   const shutdown = (signal: string) => {
-
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`[entrypoint] received ${signal}, shutting down`);
-    // Stop accepting connections, then drain the per-user children so they
-    // aren't orphaned. Both must finish inside the 10s force-exit budget.
-    server.close(() => {
-      void mcp.closeAll().finally(() => process.exit(0));
-    });
+    // Stop accepting new connections AND drain the per-user children in parallel.
+    // We do NOT gate the drain behind server.close()'s callback: that fires only
+    // once every open connection ends, which on a busy instance may not happen
+    // within the budget. A child killed mid-refresh can leave a half-rotated
+    // single-use Xero token (-> invalid_grant), so closing children cleanly must
+    // not depend on idle HTTP. Exit when the drain finishes or the soft cap hits.
+    server.close();
+    void Promise.race([
+      mcp.closeAll(),
+      new Promise((resolve) => setTimeout(resolve, 8_000).unref()),
+    ]).finally(() => process.exit(0));
     setTimeout(() => process.exit(1), 10_000).unref();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));

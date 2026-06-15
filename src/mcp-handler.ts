@@ -85,7 +85,13 @@ export function buildMcpRouter(config: McpHandlerConfig): McpRouter {
     try {
       handle = await pool.acquire(sub, name);
     } catch (err) {
-      writeJsonRpcError(res, jsonRpcIdOf(req.body), toRpcError(err));
+      const rpcError = toRpcError(err);
+      console.error("[mcp-handler] acquire failed", {
+        sub,
+        code: rpcError.code,
+        message: rpcError.message,
+      });
+      writeJsonRpcError(res, jsonRpcIdOf(req.body), rpcError);
       return;
     }
 

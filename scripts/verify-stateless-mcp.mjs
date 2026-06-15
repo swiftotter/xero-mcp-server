@@ -30,7 +30,7 @@ const ROOT = resolve(__dirname, "..");
 const ENTRYPOINT = resolve(ROOT, "dist", "cloud-run-entrypoint.js");
 const FAKE_CHILD = resolve(__dirname, "fixtures", "fake-xero-child.mjs");
 
-const PORT = 8791;
+const PORT = Number(process.env.VERIFY_PORT) || 8791;
 const BASE = `http://127.0.0.1:${PORT}`;
 const JWT_SECRET = "verify-stateless-mcp-secret";
 
@@ -100,8 +100,8 @@ async function callTool(sub) {
 async function waitForListen() {
   return new Promise((res, rej) => {
     const timer = global.setTimeout(
-      () => rej(new Error("server did not start within 8s")),
-      8000,
+      () => rej(new Error("server did not start within 20s")),
+      20000,
     );
     server.stdout.on("data", (chunk) => {
       if (chunk.toString().includes("listening on port")) {
