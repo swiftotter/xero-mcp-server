@@ -81,6 +81,15 @@ PUBLIC_URL="https://${SVC}-${PROJECT_NUMBER}.${REGION}.run.app"
 echo "computed PUBLIC_URL=${PUBLIC_URL}"
 
 # 5. Deploy
+#
+#    max-instances=1 is REQUIRED, not a cost knob: the server keeps one
+#    long-lived child process per user holding that user's Xero session, and Xero
+#    issues single-use rotating refresh tokens. Two instances refreshing the same
+#    user's token would invalidate each other -> invalid_grant -> a permanent auth
+#    break. min-instances=1 keeps the instance warm; 2Gi gives headroom for the
+#    resident per-user children. Horizontal scale needs a distributed per-user
+#    refresh lock first (future work). Keep this in sync with the live service —
+#    deploy.yaml only updates --image and will not re-apply these.
 gcloud run deploy "${SVC}" \
   --project="${PROJECT}" \
   --region="${REGION}" \
@@ -88,11 +97,11 @@ gcloud run deploy "${SVC}" \
   --service-account="${RUNNER_SA}" \
   --port=8080 \
   --allow-unauthenticated \
-  --min-instances=0 \
-  --max-instances=4 \
+  --min-instances=1 \
+  --max-instances=1 \
   --concurrency=80 \
   --cpu=1 \
-  --memory=1Gi \
+  --memory=2Gi \
   --timeout=3600 \
   --set-secrets="XERO_APP_CLIENT_ID=xero-app-id:latest,XERO_APP_CLIENT_SECRET=xero-app-secret:latest,MCP_JWT_SECRET=mcp-jwt-secret:latest" \
   --set-env-vars="GCP_PROJECT=${PROJECT},PUBLIC_URL=${PUBLIC_URL}"

@@ -5,6 +5,23 @@ import { MCPXeroClient } from "./mcp-xero-client.js";
 
 const ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 60;
 
+function detailOf(error: unknown): string {
+  const err = ensureError(error);
+  const responseData = (error as AxiosError).response?.data;
+  return typeof responseData === "string"
+    ? responseData
+    : responseData
+      ? JSON.stringify(responseData)
+      : err.message;
+}
+
+function isInvalidGrant(error: unknown): boolean {
+  return (
+    (error as AxiosError).response?.status === 400 ||
+    /invalid_grant/.test(detailOf(error))
+  );
+}
+
 type SecretManagerClient = {
   accessSecretVersion: (req: { name: string }) => Promise<
     [{ payload?: { data?: Buffer | Uint8Array | string | null } }]
@@ -27,6 +44,7 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
   private currentRefreshToken: string | null = null;
   private accessTokenExpiresAt = 0;
   private latestVersionName: string | null = null;
+  private authInFlight: Promise<void> | null = null;
 
   constructor(config: {
     clientId: string;
@@ -52,6 +70,29 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
       return;
     }
 
+    // Serialize refresh: this user's child can receive concurrent relayed tool
+    // calls (Claude issues parallel tool_use). Xero rotates the refresh token on
+    // every refresh and the old one dies, so two callers refreshing at once would
+    // race the rotation and one would get invalid_grant. Share a single in-flight
+    // refresh instead.
+    if (this.authInFlight) return this.authInFlight;
+    this.authInFlight = this.refreshAndUpdate().finally(() => {
+      this.authInFlight = null;
+    });
+    return this.authInFlight;
+  }
+
+  private async refreshAndUpdate(): Promise<void> {
+    // Re-check inside the critical section: a refresh we queued behind may have
+    // just populated a valid token.
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (
+      this.tenantId &&
+      this.accessTokenExpiresAt > nowSec + ACCESS_TOKEN_REFRESH_BUFFER_SECONDS
+    ) {
+      return;
+    }
+
     if (!this.currentRefreshToken) {
       this.currentRefreshToken = await this.readLatestRefreshToken();
     }
@@ -64,25 +105,33 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
         this.currentRefreshToken,
       );
     } catch (error) {
-      const err = ensureError(error);
-      const axiosError = error as AxiosError;
-      const responseData = axiosError.response?.data;
-      const detail =
-        typeof responseData === "string"
-          ? responseData
-          : responseData
-            ? JSON.stringify(responseData)
-            : err.message;
-
-      if (
-        axiosError.response?.status === 400 ||
-        /invalid_grant/.test(detail)
-      ) {
+      if (!isInvalidGrant(error)) {
         throw new Error(
-          `Xero refused the stored refresh token. Re-run the bootstrap script (bin/xero-oauth-bootstrap.ts) for this user. Underlying: ${detail}`,
+          `Failed to refresh Xero access token: ${detailOf(error)}`,
         );
       }
-      throw new Error(`Failed to refresh Xero access token: ${detail}`);
+      // invalid_grant: our cached token may be stale because a concurrent child
+      // (e.g. one draining during a rolling deploy) rotated it in Secret Manager
+      // after we last read it. Re-read versions/latest ONCE and retry before the
+      // hard re-bootstrap error — single-use rotation makes this a real window.
+      const latest = await this.readLatestRefreshToken();
+      if (latest === this.currentRefreshToken) {
+        throw new Error(
+          `Xero refused the stored refresh token. Re-run the bootstrap script (bin/xero-oauth-bootstrap.ts) for this user. Underlying: ${detailOf(error)}`,
+        );
+      }
+      this.currentRefreshToken = latest;
+      try {
+        tokenSet = await this.refreshWithRefreshToken(
+          this.clientId,
+          this.clientSecret,
+          this.currentRefreshToken,
+        );
+      } catch (retryError) {
+        throw new Error(
+          `Xero refused the stored refresh token even after reloading the latest secret version. Re-run the bootstrap script (bin/xero-oauth-bootstrap.ts) for this user. Underlying: ${detailOf(retryError)}`,
+        );
+      }
     }
 
     if (

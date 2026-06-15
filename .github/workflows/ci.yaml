@@ -47,6 +47,13 @@ jobs:
       - name: Verify attachment filesystem guard
         run: npm run verify:fs-guard
 
+      # Enforce that the transport stays STATELESS (issues no mcp-session-id) and
+      # the per-user child pool keeps users isolated. This is what makes instance
+      # replacement invisible; a refactor that reintroduced session state would
+      # bring back the 404-on-recycle disconnect this guards against.
+      - name: Verify stateless MCP transport + child pool
+        run: npm run verify:stateless
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
