@@ -1,37 +1,52 @@
 /**
- * JWT-gated MCP transport endpoint.
+ * JWT-gated, STATELESS MCP transport endpoint.
  *
- * Uses the Streamable HTTP transport (the current preferred transport per
- * the MCP spec, also what Claude Desktop's remote connector flow uses).
+ * Uses the Streamable HTTP transport (the current preferred transport per the
+ * MCP spec, also what Claude's remote connector uses) in STATELESS mode
+ * (sessionIdGenerator: undefined): no mcp-session-id is issued and none is
+ * validated, so the server never returns `404 session_not_found`. That is the
+ * whole point — a session id that survives an instance replacement (deploy or
+ * Cloud Run recycle) is exactly what used to get rejected and surface to the
+ * user as a disconnect.
  *
- * Per session:
- *   1. Validate the bearer JWT (handled by mcp SDK's requireBearerAuth)
- *   2. On the initialize request, spawn the existing xero-mcp-server
- *      (dist/index.js) as a stdio child with the caller's per-user
- *      XERO_REFRESH_TOKEN_SECRET_NAME, attach a Streamable HTTP transport
- *      and bridge messages between the two
- *   3. Sessions cached by their mcp-session-id with a 10-min idle timeout
+ * Per request:
+ *   1. Validate the bearer JWT (mcp SDK's requireBearerAuth) → verified `sub`.
+ *   2. `pool.acquire(sub)` get-or-(lazily-)spawns this user's long-lived child
+ *      (see child-pool.ts), keyed by `sub` — NEVER by a client-supplied header.
+ *   3. Create a FRESH stateless transport and `relay` each JSON-RPC message to
+ *      the child via its SDK Client; relay the response back verbatim.
+ *   4. Release the child and close the transport when the response is delivered.
+ *
+ * Instance replacement is therefore invisible: a request arriving at an instance
+ * with an empty pool just triggers a sub-second lazy respawn.
  */
-import { randomUUID } from "node:crypto";
-import { Request, RequestHandler, Response, Router } from "express";
+import { Request, Response, Router } from "express";
 
 import { requireBearerAuth } from "@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js";
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import {
+  ErrorCode,
+  LATEST_PROTOCOL_VERSION,
+  McpError,
+  SUPPORTED_PROTOCOL_VERSIONS,
+  type JSONRPCMessage,
+} from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 
+import { ChildHandle, ChildPool, ChildPoolError } from "./child-pool.js";
 import { XeroChainedOAuthProvider } from "./oauth-server.js";
-import { DISABLE_LOCAL_FILES_ENV } from "./helpers/local-file-access.js";
 
-const SESSION_IDLE_MS = 10 * 60_000;
-const MCP_SESSION_HEADER = "mcp-session-id";
+// The child request can be a long-running Xero report; keep this well under
+// Cloud Run's 3600s request timeout. Client disconnects abort sooner via the
+// AbortController wired to the HTTP response.
+const CHILD_REQUEST_TIMEOUT_MS = 10 * 60_000;
 
-type Session = {
-  http: StreamableHTTPServerTransport;
-  stdio: StdioClientTransport;
-  sub: string;
-  lastActivityAt: number;
-};
+// Relay any JSON-RPC result through untouched — we are a transparent proxy, not
+// a semantic MCP client, so we don't validate the child's result shape.
+const PassthroughResultSchema = z.object({}).passthrough();
+
+type JsonRpcId = string | number | null;
+type RpcError = { code: number; message: string; data?: unknown };
 
 export type McpHandlerConfig = {
   provider: XeroChainedOAuthProvider;
@@ -41,100 +56,202 @@ export type McpHandlerConfig = {
   serverEntrypoint: string;
 };
 
-export function buildMcpRouter(config: McpHandlerConfig): Router {
-  const router = Router();
-  const sessions = new Map<string, Session>();
+export type McpRouter = {
+  router: Router;
+  /** Drain every per-user child (call from the SIGTERM handler). */
+  closeAll: () => Promise<void>;
+};
 
-  setInterval(() => {
-    const now = Date.now();
-    for (const [id, session] of sessions) {
-      if (now - session.lastActivityAt > SESSION_IDLE_MS) {
-        closeSession(sessions, id);
-      }
-    }
-  }, 60_000).unref();
+export function buildMcpRouter(config: McpHandlerConfig): McpRouter {
+  const router = Router();
+  const pool = new ChildPool({
+    serverEntrypoint: config.serverEntrypoint,
+    projectId: config.projectId,
+    xeroAppClientId: config.xeroAppClientId,
+    xeroAppClientSecret: config.xeroAppClientSecret,
+  });
 
   const bearerAuth = requireBearerAuth({ verifier: config.provider });
 
-  const handle = async (req: Request, res: Response): Promise<void> => {
+  const handlePost = async (req: Request, res: Response): Promise<void> => {
     const sub = readSubFromAuth(req);
     if (!sub) {
       res.status(401).json({ error: "invalid_token" });
       return;
     }
+    const name = readNameFromAuth(req);
 
-    const sessionIdHeader =
-      typeof req.headers[MCP_SESSION_HEADER] === "string"
-        ? (req.headers[MCP_SESSION_HEADER] as string)
-        : undefined;
-
-    let session: Session | undefined = sessionIdHeader
-      ? sessions.get(sessionIdHeader)
-      : undefined;
-
-    if (session && session.sub !== sub) {
-      res.status(403).json({ error: "session_user_mismatch" });
+    let handle: ChildHandle;
+    try {
+      handle = await pool.acquire(sub, name);
+    } catch (err) {
+      writeJsonRpcError(res, jsonRpcIdOf(req.body), toRpcError(err));
       return;
     }
 
-    if (!session) {
-      // Per the MCP Streamable HTTP spec: if a request carries a session id
-      // we don't know (e.g. survived a container restart), return 404 so the
-      // client drops the stale id and re-initializes without one.
-      if (sessionIdHeader) {
-        res.status(404).json({
-          error: "session_not_found",
-          error_description: "Re-initialize without an mcp-session-id header.",
-        });
-        return;
-      }
-      if (req.method !== "POST") {
-        res.status(400).json({ error: "session_required" });
-        return;
-      }
-      try {
-        const name = readNameFromAuth(req);
-        session = await openSession({ sub, name, config, sessions });
-      } catch (e) {
-        const msg = (e as Error).message ?? "failed to start session";
-        if (!res.headersSent) {
-          res.status(500).json({
-            error: "server_error",
-            error_description: msg,
-          });
-        }
-        return;
-      }
-    }
+    // A stateless transport must be fresh per request (the SDK throws if reused)
+    // — that is what guarantees no session id is ever minted or validated.
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+    });
+    const abort = new AbortController();
+    const onClientGone = (): void => {
+      if (!res.writableEnded) abort.abort();
+    };
+    res.on("close", onClientGone);
 
-    session.lastActivityAt = Date.now();
+    transport.onmessage = (msg: JSONRPCMessage): void => {
+      void relay(handle, transport, msg, abort.signal);
+    };
+
     try {
-      await session.http.handleRequest(
-        req,
-        res,
-        req.method === "POST" ? req.body : undefined,
-      );
-    } catch (e) {
-      const err = e as Error;
+      await transport.start();
+      // Resolves only after the response stream is fully delivered, so the
+      // finally below runs after relay() has sent its reply — not before.
+      await transport.handleRequest(req, res, req.body);
+    } catch (err) {
       console.error(
         "[mcp-handler] handleRequest threw",
-        err?.message,
-        err?.stack,
+        (err as Error)?.message,
       );
       if (!res.headersSent) {
-        res.status(500).json({
-          error: "server_error",
-          error_description: err?.message ?? "handler error",
-        });
+        writeJsonRpcError(res, jsonRpcIdOf(req.body), toRpcError(err));
       }
+    } finally {
+      res.off("close", onClientGone);
+      pool.release(handle);
+      void transport.close().catch(() => undefined);
     }
   };
 
-  router.post("/mcp", bearerAuth, handle);
-  router.get("/mcp", bearerAuth, handle);
-  router.delete("/mcp", bearerAuth, handle);
+  // The child sends no server-initiated notifications, so there is no standalone
+  // SSE stream to open. Refuse GET instead of leaving a dangling connection.
+  const handleGet = (_req: Request, res: Response): void => {
+    res.status(405).set("Allow", "POST").json({ error: "method_not_allowed" });
+  };
 
-  return router;
+  // Stateless: there is no session to delete. Best-effort free this user's idle
+  // child so an explicit disconnect reclaims memory promptly.
+  const handleDelete = (req: Request, res: Response): void => {
+    const sub = readSubFromAuth(req);
+    if (sub) pool.evict(sub);
+    res.status(204).end();
+  };
+
+  router.post("/mcp", bearerAuth, handlePost);
+  router.get("/mcp", bearerAuth, handleGet);
+  router.delete("/mcp", bearerAuth, handleDelete);
+
+  return { router, closeAll: () => pool.closeAll() };
+}
+
+async function relay(
+  handle: ChildHandle,
+  transport: StreamableHTTPServerTransport,
+  msg: JSONRPCMessage,
+  signal: AbortSignal,
+): Promise<void> {
+  const method = (msg as { method?: string }).method;
+  const id = (msg as { id?: JsonRpcId }).id;
+  const isRequest =
+    typeof method === "string" && id !== undefined && id !== null;
+
+  // Notifications carry no id and need no reply. We don't forward them: the
+  // child is already initialized (so notifications/initialized is a no-op), and
+  // id-bearing notifications like cancellations reference OUR id space, not the
+  // child's.
+  if (!isRequest) return;
+
+  const params = (msg as { params?: unknown }).params as
+    | Record<string, unknown>
+    | undefined;
+
+  // Answer the handshake and keepalive locally from the cached child handshake;
+  // we do not re-initialize the shared long-lived child per external connection.
+  if (method === "initialize") {
+    await send(transport, {
+      jsonrpc: "2.0",
+      id,
+      result: synthInitializeResult(handle, params),
+    });
+    return;
+  }
+  if (method === "ping") {
+    await send(transport, { jsonrpc: "2.0", id, result: {} });
+    return;
+  }
+
+  try {
+    const result = await handle.client.request({ method, params }, PassthroughResultSchema, {
+      signal,
+      timeout: CHILD_REQUEST_TIMEOUT_MS,
+    });
+    await send(transport, { jsonrpc: "2.0", id, result });
+  } catch (err) {
+    // Always answer a request, even on failure, so the SSE stream closes and the
+    // HTTP request doesn't hang. Child crash → ConnectionClosed; the pool's
+    // onclose already dropped the handle, so the next request respawns.
+    await send(transport, { jsonrpc: "2.0", id, error: toRpcError(err) });
+  }
+}
+
+function synthInitializeResult(
+  handle: ChildHandle,
+  params: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const requested = params?.["protocolVersion"];
+  const protocolVersion =
+    typeof requested === "string" && SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+      ? requested
+      : LATEST_PROTOCOL_VERSION;
+  const result: Record<string, unknown> = {
+    protocolVersion,
+    capabilities: handle.serverCapabilities ?? {},
+    serverInfo: handle.serverInfo ?? { name: "Xero MCP Server", version: "1.0.0" },
+  };
+  if (handle.instructions) result.instructions = handle.instructions;
+  return result;
+}
+
+async function send(
+  transport: StreamableHTTPServerTransport,
+  msg: JSONRPCMessage,
+): Promise<void> {
+  try {
+    await transport.send(msg);
+  } catch (err) {
+    console.error("[mcp-handler] transport.send failed", (err as Error)?.message);
+  }
+}
+
+function toRpcError(err: unknown): RpcError {
+  if (err instanceof ChildPoolError) {
+    return { code: err.code, message: err.message };
+  }
+  if (err instanceof McpError) {
+    return err.data !== undefined
+      ? { code: err.code, message: err.message, data: err.data }
+      : { code: err.code, message: err.message };
+  }
+  const message = err instanceof Error ? err.message : String(err);
+  return { code: ErrorCode.InternalError, message };
+}
+
+function writeJsonRpcError(
+  res: Response,
+  id: JsonRpcId,
+  error: RpcError,
+): void {
+  if (res.headersSent) return;
+  res.status(200).json({ jsonrpc: "2.0", id, error });
+}
+
+function jsonRpcIdOf(body: unknown): JsonRpcId {
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    const id = (body as { id?: unknown }).id;
+    if (typeof id === "string" || typeof id === "number") return id;
+  }
+  return null;
 }
 
 function readSubFromAuth(req: Request): string | undefined {
@@ -146,151 +263,3 @@ function readNameFromAuth(req: Request): string {
   const name = req.auth?.extra?.["name"];
   return typeof name === "string" && name.length > 0 ? name : "Unknown user";
 }
-
-async function openSession(args: {
-  sub: string;
-  name: string;
-  config: McpHandlerConfig;
-  sessions: Map<string, Session>;
-}): Promise<Session> {
-  const { sub, name, config, sessions } = args;
-
-  const http = new StreamableHTTPServerTransport({
-    sessionIdGenerator: () => randomUUID(),
-  });
-
-  const stdio = new StdioClientTransport({
-    command: process.execPath,
-    args: [config.serverEntrypoint],
-    env: {
-      ...childEnv(),
-      XERO_APP_CLIENT_ID: config.xeroAppClientId,
-      XERO_APP_CLIENT_SECRET: config.xeroAppClientSecret,
-      XERO_REFRESH_TOKEN_SECRET_NAME: `projects/${config.projectId}/secrets/xero-refresh-token-${sub}`,
-      XERO_USER_NAME: name,
-      // The child runs untrusted multi-user tool calls and shares the parent's
-      // secrets via its environment. Forbid local-filesystem tool args so a
-      // caller can't read /proc/self/environ or overwrite server code.
-      [DISABLE_LOCAL_FILES_ENV]: "1",
-    },
-    stderr: "inherit",
-  });
-
-  // Bridge HTTP → stdio (Claude → MCP server)
-  http.onmessage = (msg: JSONRPCMessage) => {
-    void stdio.send(msg).catch((err) => {
-      console.error("[mcp-handler] stdio send failed", err);
-    });
-  };
-  // Bridge stdio → HTTP (MCP server → Claude)
-  stdio.onmessage = (msg: JSONRPCMessage) => {
-    void http.send(msg).catch((err) => {
-      console.error("[mcp-handler] http send failed", err);
-    });
-  };
-
-  // Detach the onclose handlers and guard against re-entry before closing:
-  // closeBoth is registered as BOTH transports' onclose, and closing either
-  // transport fires its onclose. Without this, http.close() -> http.onclose ->
-  // closeBoth -> http.close() ... recurses until the stack overflows and the
-  // unhandled rejection crashes the instance.
-  let closed = false;
-  const closeBoth = () => {
-    if (closed) return;
-    closed = true;
-    http.onclose = undefined;
-    stdio.onclose = undefined;
-    void http.close().catch(() => undefined);
-    void stdio.close().catch(() => undefined);
-    if (http.sessionId) sessions.delete(http.sessionId);
-  };
-  http.onclose = closeBoth;
-  stdio.onclose = closeBoth;
-  http.onerror = (err) => console.error("[mcp-handler] http error", err);
-  stdio.onerror = (err) => console.error("[mcp-handler] stdio error", err);
-
-  await stdio.start();
-  await http.start();
-
-  const session: Session = {
-    http,
-    stdio,
-    sub,
-    lastActivityAt: Date.now(),
-  };
-
-  // The transport generates the session id during the first POST (initialize).
-  // We watch for it and register the session as soon as it's known.
-  const trackSessionId = () => {
-    if (http.sessionId && !sessions.has(http.sessionId)) {
-      sessions.set(http.sessionId, session);
-    }
-  };
-  const wrappedSend = http.send.bind(http);
-  http.send = async (msg, opts) => {
-    trackSessionId();
-    return wrappedSend(msg, opts);
-  };
-
-  return session;
-}
-
-function closeSession(sessions: Map<string, Session>, id: string): void {
-  const s = sessions.get(id);
-  if (!s) return;
-  sessions.delete(id);
-  void s.http.close().catch(() => undefined);
-  void s.stdio.close().catch(() => undefined);
-}
-
-// Env passed through to each per-user child. We deliberately do NOT copy the
-// whole parent process.env: it holds MCP_JWT_SECRET — the HS256 key that signs
-// EVERY user's access token — so leaking it (e.g. via a child reading its own
-// /proc/self/environ) would let an attacker forge tokens for any user. The
-// child authenticates only to Xero and Secret Manager, so it needs system /
-// Node runtime basics plus Google ADC vars (ADC itself works off the metadata
-// server and needs no env). The Xero credentials it needs are set explicitly by
-// the caller; everything sensitive and parent-only is excluded.
-const CHILD_ENV_ALLOWLIST = new Set([
-  "PATH",
-  "HOME",
-  "TMPDIR",
-  "TMP",
-  "TEMP",
-  "TZ",
-  "LANG",
-  "PWD",
-]);
-const CHILD_ENV_ALLOWED_PREFIXES = [
-  "LC_",
-  "NODE_", // NODE_OPTIONS, NODE_EXTRA_CA_CERTS, ...
-  "SSL_", // custom CA roots
-  "GRPC_", // @grpc/grpc-js tuning used by Secret Manager
-  "GOOGLE_", // ADC / project detection
-  "GCLOUD_",
-  "GCP_", // GCP_PROJECT
-  "GCE_", // GCE_METADATA_HOST
-  "GAE_",
-  "CLOUDSDK_",
-  "K_", // Cloud Run-injected K_SERVICE / K_REVISION / ...
-];
-// Never forward these to a child even if a future allowlist entry would match.
-const CHILD_ENV_DENYLIST = new Set(["MCP_JWT_SECRET"]);
-
-function childEnv(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(process.env)) {
-    if (typeof v !== "string") continue;
-    if (CHILD_ENV_DENYLIST.has(k)) continue;
-    if (
-      CHILD_ENV_ALLOWLIST.has(k) ||
-      CHILD_ENV_ALLOWED_PREFIXES.some((prefix) => k.startsWith(prefix))
-    ) {
-      out[k] = v;
-    }
-  }
-  return out;
-}
-
-export type { Session };
-export type { RequestHandler };

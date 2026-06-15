@@ -20,7 +20,8 @@
     "watch": "tsc --watch",
     "lint:fix": "eslint --fix",
     "lint": "eslint .",
-    "verify:fs-guard": "node scripts/verify-attachment-fs-guard.mjs"
+    "verify:fs-guard": "node scripts/verify-attachment-fs-guard.mjs",
+    "verify:stateless": "node scripts/verify-stateless-mcp.mjs"
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",

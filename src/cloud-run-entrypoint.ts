@@ -120,15 +120,14 @@ async function main(): Promise<void> {
       new URL(`${publicUrl}/mcp`),
     ),
   );
-  app.use(
-    buildMcpRouter({
-      provider,
-      projectId,
-      xeroAppClientId: xeroClientId,
-      xeroAppClientSecret: xeroClientSecret,
-      serverEntrypoint,
-    }),
-  );
+  const mcp = buildMcpRouter({
+    provider,
+    projectId,
+    xeroAppClientId: xeroClientId,
+    xeroAppClientSecret: xeroClientSecret,
+    serverEntrypoint,
+  });
+  app.use(mcp.router);
 
   app.use(
     (
@@ -152,9 +151,13 @@ async function main(): Promise<void> {
   });
 
   const shutdown = (signal: string) => {
-     
+
     console.log(`[entrypoint] received ${signal}, shutting down`);
-    server.close(() => process.exit(0));
+    // Stop accepting connections, then drain the per-user children so they
+    // aren't orphaned. Both must finish inside the 10s force-exit budget.
+    server.close(() => {
+      void mcp.closeAll().finally(() => process.exit(0));
+    });
     setTimeout(() => process.exit(1), 10_000).unref();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
