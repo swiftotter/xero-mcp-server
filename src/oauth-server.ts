@@ -95,8 +95,27 @@ function isValidSub(sub: string): boolean {
   return /^[a-zA-Z0-9_.-]{1,128}$/.test(sub);
 }
 
+// Loopback redirects (RFC 8252 §7.3) for native / CLI OAuth clients such as
+// Claude Code (host terminal), which listens on http://localhost:<port>/callback
+// with an ephemeral port assigned at runtime. The port can't be a fixed
+// allowlist entry, so we validate the shape (http + loopback host) and rely on
+// the per-client redirect_uri exact-match in /authorize + PKCE + our JWT
+// signature as the security boundary. A loopback redirect is safe regardless of
+// port or path: only a process on the user's own machine can receive the code.
+function isLoopbackRedirect(uri: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(uri);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:") return false;
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  return host === "localhost" || host === "127.0.0.1" || host === "::1";
+}
+
 function isValidClaudeRedirect(uri: string): boolean {
-  return ALLOWED_CLAUDE_REDIRECTS.has(uri);
+  return ALLOWED_CLAUDE_REDIRECTS.has(uri) || isLoopbackRedirect(uri);
 }
 
 function resolveDisplayName(ui: {
