@@ -41,6 +41,14 @@ jobs:
         env:
           NODE_OPTIONS: "--max-old-space-size=4096"
 
+      - name: npm audit (fail on HIGH+ in production deps)
+        # Gate on what ships to the runtime image. Dev-only advisories
+        # (build tools, linters) never reach production, so they must not
+        # block a security deploy — they still get Dependabot PRs for
+        # visibility. Also avoids the all-or-nothing deadlock where one
+        # dev-tool advisory with no fix wedges every PR red.
+        run: npm audit --omit=dev --audit-level=high
+
       # Enforce the hosted-deployment filesystem guard so a future refactor
       # (renaming the disable flag, simplifying childEnv) can't silently reopen
       # the secret-read / file-write holes this protects against.

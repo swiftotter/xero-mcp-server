@@ -1,0 +1,99 @@
+name: Dependabot auto-merge
+
+# Auto-merge Dependabot security PRs that are at least 3 days old and have
+# passing CI. Non-security version updates flow through but stay open for
+# human review.
+#
+# Why 3 days: gives the community time to flag bad/compromised package
+# versions before we ship them. dependabot.yml has a 3-day cooldown that
+# GitHub *may* skip for active-exploitation advisories — this workflow's
+# explicit age check is the belt-and-suspenders.
+#
+# Requires (set these via ops/security-automation/apply.sh):
+#   - repo allow_auto_merge = true
+#   - branch protection on main with the CI checks required (admin bypass ok)
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize, ready_for_review]
+  schedule:
+    # Retry aging PRs once a day so a security PR opened at age 0
+    # still gets merged once it crosses the 3-day threshold + CI is green.
+    - cron: "0 13 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-auto-merge-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  auto-merge-prs:
+    if: github.event_name == 'pull_request_target' && github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute PR age in days
+        id: age
+        run: |
+          CREATED="${{ github.event.pull_request.created_at }}"
+          AGE_SEC=$(( $(date -u +%s) - $(date -u -d "$CREATED" +%s) ))
+          AGE_DAYS=$(( AGE_SEC / 86400 ))
+          echo "days=$AGE_DAYS" >> "$GITHUB_OUTPUT"
+          echo "PR age: ${AGE_DAYS}d (created $CREATED)"
+
+      - name: Enable auto-merge — security advisories aged >= 3 days
+        if: |
+          steps.meta.outputs.ghsa-id != '' &&
+          steps.age.outputs.days >= '3'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Note if too young to auto-merge
+        if: |
+          steps.meta.outputs.ghsa-id != '' &&
+          steps.age.outputs.days < '3'
+        run: |
+          echo "Security PR is ${{ steps.age.outputs.days }}d old; auto-merge waits for 3-day threshold."
+          gh pr comment "$PR_URL" --body "Auto-merge will engage once this PR reaches 3 days old (currently ${{ steps.age.outputs.days }}d). The cron job re-evaluates daily."
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  auto-merge-aging:
+    # Daily sweep: enable auto-merge on Dependabot security PRs that have
+    # crossed the 3-day threshold since they were opened.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Find aged Dependabot security PRs and enable auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          THREE_DAYS_AGO=$(date -u -d '3 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          PRS=$(gh pr list --repo "$REPO" \
+            --author "app/dependabot" \
+            --state open \
+            --json number,createdAt,title,labels)
+          echo "$PRS" | jq -r --arg cutoff "$THREE_DAYS_AGO" '
+            .[] | select(.createdAt < $cutoff) | .number
+          ' | while read -r NUM; do
+            [ -z "$NUM" ] && continue
+            # Only enable auto-merge on security-flagged PRs. Dependabot
+            # adds "security" to the title for advisory-driven updates.
+            TITLE=$(echo "$PRS" | jq -r --arg n "$NUM" '.[] | select(.number == ($n | tonumber)) | .title')
+            if echo "$TITLE" | grep -qiE '\b(security|cve|ghsa)\b'; then
+              echo "Enabling auto-merge on aged security PR #$NUM ($TITLE)"
+              gh pr merge --auto --squash --repo "$REPO" "$NUM" || true
+            fi
+          done
