@@ -1,0 +1,55 @@
+version: 2
+updates:
+  # JS dependencies. Slim config: one weekly grouped PR for non-major
+  # patches+minors per dependency-type, separate PRs only for major bumps
+  # (which usually break things and need review anyway). Security advisories
+  # fire from Dependabot's separate security pipeline and ignore this
+  # scheduling — they still open immediately.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    cooldown:
+      default-days: 3
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+    groups:
+      # Batch ALL security advisories into one PR per run. Critical: CI's
+      # npm audit gate is all-or-nothing, but Dependabot otherwise opens one
+      # PR per advisory — so no single PR can ever turn CI green while other
+      # advisories remain. Grouping security fixes lets them clear the gate
+      # together and auto-merge. (applies-to: security-updates is separate
+      # from the version-update groups below.)
+      security:
+        applies-to: security-updates
+        patterns: ["*"]
+      production-non-major:
+        dependency-type: "production"
+        update-types: ["patch", "minor"]
+      development-non-major:
+        dependency-type: "development"
+        update-types: ["patch", "minor"]
+
+  # Docker base image. Monthly is plenty — slim images don't churn often, and
+  # OS-level CVEs surface via GCP Container Analysis separately.
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # GitHub Actions used in our workflows. Group them all — actions tend to
+  # bump in lockstep, no value in N separate PRs.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels:
+      - "ci"
+    groups:
+      all-actions:
+        patterns: ["*"]
