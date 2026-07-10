@@ -136,6 +136,7 @@ async function main() {
       contactId: "00000000-0000-0000-0000-000000000000",
       lineItems: [{ description: "Gate test", quantity: 1, unitAmount: 1, accountCode: "200", taxType: "NONE" }],
       reference: "gate-test",
+      purpose: "gate test",
     },
   });
   const previewText = previewResult?.content?.[0]?.text ?? "";
@@ -158,6 +159,7 @@ async function main() {
       contactId: "00000000-0000-0000-0000-000000000000",
       lineItems: [{ description: "Gate test", quantity: 1, unitAmount: 1, accountCode: "200", taxType: "NONE" }],
       reference: "gate-test",
+      purpose: "gate test",
       confirm: true,
     },
   });
