@@ -10,6 +10,7 @@ async function getContacts(
   page?: number,
   searchTerm?: string,
   pageSize?: number,
+  includeDetails?: boolean,
 ): Promise<Contact[]> {
   await xeroClient.authenticate();
 
@@ -23,7 +24,7 @@ async function getContacts(
     undefined, // iDs
     page, // page
     undefined, // includeArchived
-    true, // summaryOnly
+    !includeDetails, // summaryOnly — false returns addresses/phones
     searchTerm, // searchTerm
     resolvedPageSize, // pageSize
     getClientHeaders(),
@@ -38,9 +39,10 @@ export async function listXeroContacts(
   page?: number,
   searchTerm?: string,
   pageSize?: number,
+  includeDetails?: boolean,
 ): Promise<XeroClientResponse<Contact[]>> {
   try {
-    const contacts = await getContacts(page, searchTerm, pageSize);
+    const contacts = await getContacts(page, searchTerm, pageSize, includeDetails);
 
     return {
       result: contacts,
