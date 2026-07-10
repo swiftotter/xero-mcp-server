@@ -62,6 +62,19 @@ jobs:
       - name: Verify stateless MCP transport + child pool
         run: npm run verify:stateless
 
+      # Guard against the empty-schema regression: every tool must publish a
+      # non-empty input schema. If a refactor or SDK change ever makes the SDK
+      # misread a tool's Zod raw shape and fall back to {"type":"object"} with no
+      # properties, clients silently stringify all arguments and confirmed writes
+      # break with no error. This asserts the published schemas directly.
+      - name: Verify tool input schemas are non-empty
+        run: npm run verify:schemas
+
+      # Enforce the write-confirmation gate: write tools expose `confirm` and
+      # return a preview until confirm:true; read tools never expose `confirm`.
+      - name: Verify write-confirmation gate
+        run: npm run verify:confirmation-gate
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest

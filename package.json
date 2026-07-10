@@ -21,11 +21,13 @@
     "lint:fix": "eslint --fix",
     "lint": "eslint .",
     "verify:fs-guard": "node scripts/verify-attachment-fs-guard.mjs",
-    "verify:stateless": "node scripts/verify-stateless-mcp.mjs"
+    "verify:stateless": "node scripts/verify-stateless-mcp.mjs",
+    "verify:schemas": "node scripts/verify-tool-schemas.mjs",
+    "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs"
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",
-    "@modelcontextprotocol/sdk": "^1.23.4",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
