@@ -1,5 +1,9 @@
 import { listXeroContacts } from "../../handlers/list-xero-contacts.handler.js";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
+import {
+  formatAddressLines,
+  formatPhoneLines,
+} from "../../helpers/format-contact-details.js";
 import { z } from "zod";
 
 const ListContactsTool = CreateXeroTool(
@@ -19,10 +23,23 @@ const ListContactsTool = CreateXeroTool(
       .max(100)
       .optional()
       .describe("Optional page size (1–100). Defaults to 10."),
+    includeDetails: z
+      .boolean()
+      .optional()
+      .describe(
+        "When true, return full contact records including street/postal addresses and phone numbers. \
+        Use this to find contacts by state/region, city, or postal code, then filter the results yourself \
+        (Xero can't filter contacts by address server-side). Defaults to false for a lighter summary.",
+      ),
   },
   async (params) => {
-    const { page, searchTerm, pageSize } = params;
-    const response = await listXeroContacts(page, searchTerm, pageSize);
+    const { page, searchTerm, pageSize, includeDetails } = params;
+    const response = await listXeroContacts(
+      page,
+      searchTerm,
+      pageSize,
+      includeDetails,
+    );
 
     if (response.isError) {
       return {
@@ -79,6 +96,8 @@ const ListContactsTool = CreateXeroTool(
               : null,
             contact.hasAttachments ? "Has Attachments: Yes" : null,
             contact.hasValidationErrors ? "Has Validation Errors: Yes" : null,
+            ...formatAddressLines(contact),
+            ...formatPhoneLines(contact),
           ]
             .filter(Boolean)
             .join("\n"),
