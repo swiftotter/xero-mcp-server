@@ -107,6 +107,15 @@ class CustomConnectionsXeroClient extends MCPXeroClient {
       token_type: tokenResponse.token_type,
     });
   }
+
+  /**
+   * No-op, and correct: this client mints a brand-new token from client credentials on
+   * every `authenticate()` call — it caches nothing — so the reauth-retry wrapper already
+   * gets a fresh credential without anything being discarded first.
+   */
+  public invalidateAccessToken(): void {
+    // intentionally empty
+  }
 }
 
 class BearerTokenXeroClient extends MCPXeroClient {
@@ -123,6 +132,15 @@ class BearerTokenXeroClient extends MCPXeroClient {
     });
 
     await this.updateTenants();
+  }
+
+  /**
+   * Nothing to invalidate: the bearer token comes from the environment and is re-stamped
+   * verbatim on every `authenticate()`, so a retry presents the same credential. A 401 is
+   * meant to surface here rather than be retried.
+   */
+  public invalidateAccessToken(): void {
+    // intentionally empty
   }
 }
 

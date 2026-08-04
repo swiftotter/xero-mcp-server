@@ -23,7 +23,8 @@
     "verify:fs-guard": "node scripts/verify-attachment-fs-guard.mjs",
     "verify:stateless": "node scripts/verify-stateless-mcp.mjs",
     "verify:schemas": "node scripts/verify-tool-schemas.mjs",
-    "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs"
+    "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs",
+    "verify:auth-recovery": "node scripts/verify-auth-recovery.mjs"
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",
