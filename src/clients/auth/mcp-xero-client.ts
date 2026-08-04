@@ -78,12 +78,23 @@ export abstract class MCPXeroClient extends XeroClient {
             return await method.apply(target, args);
           } catch (error: unknown) {
             if (!shouldRetryAfterReauth(error, false)) throw error;
+
+            const before = this.readTokenSet()?.access_token;
             this.invalidateAccessToken();
             await this.authenticate();
-            // `authenticate()` re-runs setAccessToken(), which reassigns `accessToken` on
-            // `target`, so this second call carries the new credential. Passing
-            // `alreadyRetried: true` is implicit — this path is not reachable twice
-            // because the retry is outside the proxy's own catch.
+            const after = this.readTokenSet()?.access_token;
+
+            // Only re-send if the credential actually changed. This is what makes the
+            // bearer-token client behave as documented: its token comes from the
+            // environment and is re-stamped verbatim, so there is nothing new to present
+            // and a second attempt would just burn a round trip against Xero's auth
+            // endpoint. The client-credentials client mints a fresh token on every
+            // `authenticate()`, so it still retries.
+            if (before === after) throw error;
+
+            // `authenticate()` re-ran setAccessToken(), which reassigned the token on
+            // `target`, so this call carries the new credential. It cannot recurse: the
+            // retry sits outside the proxy's own catch.
             return await method.apply(target, args);
           }
         };

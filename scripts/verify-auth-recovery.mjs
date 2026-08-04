@@ -197,6 +197,41 @@ const tokenOn = (api) => api.authentications?.OAuth2?.accessToken;
   ok("payrollNZApi is wrapped too", typeof client.payrollNZApi === "object");
 }
 
+{
+  // A client whose credential cannot change must not be retried — the bearer-token client's
+  // token comes from the environment and is re-stamped verbatim, so a second attempt would
+  // present the identical token. This is the case the shared Proxy used to retry anyway.
+  class UnchangingClient extends MCPXeroClient {
+    constructor() {
+      super();
+      this.authCalls = 0;
+    }
+    async authenticate() {
+      this.authCalls += 1;
+      this.setTokenSet({ access_token: "fixed-token" });
+    }
+    invalidateAccessToken() {
+      // nothing to invalidate
+    }
+  }
+
+  const client = new UnchangingClient();
+  await client.authenticate();
+  let n = 0;
+  client.accountingApi.getContacts = async () => {
+    n += 1;
+    throw unauthorized();
+  };
+  let threw = null;
+  try {
+    await client.accountingApi.getContacts("tenant");
+  } catch (e) {
+    threw = e;
+  }
+  ok("an unchanging credential surfaces the 401", threw !== null);
+  eq("an unchanging credential is NOT retried", n, 1);
+}
+
 console.log("\n=== Xero Auth Recovery Checks ===\n");
 let okCount = 0;
 for (const c of checks) {

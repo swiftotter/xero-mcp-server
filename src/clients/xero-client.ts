@@ -136,8 +136,9 @@ class BearerTokenXeroClient extends MCPXeroClient {
 
   /**
    * Nothing to invalidate: the bearer token comes from the environment and is re-stamped
-   * verbatim on every `authenticate()`, so a retry presents the same credential. A 401 is
-   * meant to surface here rather than be retried.
+   * verbatim on every `authenticate()`. The reauth wrapper in MCPXeroClient compares the
+   * token before and after, sees it unchanged, and surfaces the 401 without a pointless
+   * second attempt.
    */
   public invalidateAccessToken(): void {
     // intentionally empty
