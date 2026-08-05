@@ -52,6 +52,21 @@ jobs:
       # Enforce the hosted-deployment filesystem guard so a future refactor
       # (renaming the disable flag, simplifying childEnv) can't silently reopen
       # the secret-read / file-write holes this protects against.
+      - name: Verify dependency overrides
+        # package.json pins brace-expansion into the @google-cloud/secret-manager chain to
+        # clear a HIGH advisory, and axios (xero-node's transport) for the same reason.
+        # The brace-expansion pin is load-bearing: the 5.x line drops the `default` export
+        # minimatch@9 calls, so a wrong version makes `npm audit` report zero while
+        # silently breaking glob inside the path that reads every user's refresh token.
+        # Invisible to lint and build; this asserts it at require() time.
+        run: npm run verify:deps
+
+      - name: Verify auth 401 recovery
+        # The reauth Proxy over accountingApi/payrollNZApi. Its critical property — that
+        # setAccessToken() still writes THROUGH the Proxy — is invisible to tsc: a wrong
+        # trap would silently stop every token refresh taking effect.
+        run: npm run verify:auth-recovery
+
       - name: Verify attachment filesystem guard
         run: npm run verify:fs-guard
 

@@ -20,10 +20,12 @@
     "watch": "tsc --watch",
     "lint:fix": "eslint --fix",
     "lint": "eslint .",
+    "verify:deps": "node scripts/verify-deps.mjs",
     "verify:fs-guard": "node scripts/verify-attachment-fs-guard.mjs",
     "verify:stateless": "node scripts/verify-stateless-mcp.mjs",
     "verify:schemas": "node scripts/verify-tool-schemas.mjs",
-    "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs"
+    "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs",
+    "verify:auth-recovery": "node scripts/verify-auth-recovery.mjs"
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",
@@ -52,6 +54,40 @@
   "overrides": {
     "hono": "^4.12.25",
     "protobufjs": "^7.6.4",
-    "form-data": "^4.0.6"
-  }
+    "form-data": "^4.0.6",
+    "axios": "^1.18.0",
+    "brace-expansion": "^2.1.4",
+    "fast-uri": "^3.1.5",
+    "ip-address": "^10.3.1"
+  },
+  "//overrides": [
+    "Transitive-only security patches for HIGH advisories that fail CI's",
+    "`npm audit --omit=dev --audit-level=high` gate. Expect the floors to MOVE \u2014 read the",
+    "range off the advisory rather than trusting this note. Several of these were already",
+    "resolved at a version a later advisory then covered, which is how CI went red on main",
+    "with no dependency change on our side.",
+    "",
+    "axios: arrives via xero-node, which declares ^1.7.7. Advisories cover 1.0.0 - 1.17.0",
+    "and we resolved exactly 1.17.0, so the floor is 1.18.0. NOTE: src/clients/xero-client.ts",
+    "imports axios directly while package.json does not declare it \u2014 a phantom dependency",
+    "that works only because xero-node hoists it. Worth declaring properly; out of scope for",
+    "a CI fix.",
+    "",
+    "brace-expansion: STAY IN THE 2.x LINE. It arrives via @google-cloud/secret-manager ->",
+    "google-gax -> rimraf -> glob -> minimatch@9, and the advisories cover 2.0.0 - 2.1.3, so",
+    "2.1.4 clears them. Do NOT jump to 5.x to silence a future advisory: 5.x exports",
+    "{ expand } with no `default`, while minimatch@9's compiled output calls",
+    "brace_expansion_1.default(), so it breaks glob's brace expansion at runtime inside the",
+    "Secret Manager chain \u2014 which is where this server reads every user's refresh token, and",
+    "it is invisible to tsc and eslint. `npm run verify:deps` is the guard; run it if you",
+    "touch this. (swiftotter-github-mcp CAN pin 5.x because it also pins minimatch@10, which",
+    "is built against it. That pairing does not transfer here.)",
+    "",
+    "fast-uri: @modelcontextprotocol/sdk -> ajv, which declares ^3.0.1. Host-confusion",
+    "advisories cover 3.0.0 - 3.1.4, so the floor is 3.1.5. NOT 4.x \u2014 published, but ajv",
+    "would not accept a major.",
+    "",
+    "ip-address: @modelcontextprotocol/sdk -> express-rate-limit, which declares ^10.2.0.",
+    "SSRF / trust-boundary advisories cover <=10.3.0, so the floor is 10.3.1."
+  ]
 }

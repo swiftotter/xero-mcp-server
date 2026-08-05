@@ -2,6 +2,7 @@ import { AxiosError } from "axios";
 
 import { ensureError } from "../../helpers/ensure-error.js";
 import { MCPXeroClient } from "./mcp-xero-client.js";
+import { newestEnabledVersion, versionsToDisable } from "./token-recovery.js";
 
 const ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 60;
 
@@ -30,7 +31,7 @@ type SecretManagerClient = {
     parent: string;
     payload: { data: Buffer };
   }) => Promise<[{ name?: string | null }]>;
-  listSecretVersions: (req: { parent: string }) => Promise<
+  listSecretVersions: (req: { parent: string; filter?: string }) => Promise<
     [Array<{ name?: string | null; state?: string | number | null }>]
   >;
   disableSecretVersion: (req: { name: string }) => Promise<unknown>;
@@ -61,12 +62,41 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     this.secretName = config.secretName;
   }
 
-  public async authenticate(): Promise<void> {
+  /**
+   * Whether we hold an access token that is actually present and not about to expire.
+   *
+   * The predicate this replaced was `this.tenantId && this.accessTokenExpiresAt > ...`.
+   * `tenantId` means *which Xero org*, not *do I have a credential* — this class has no
+   * access-token field of its own, because the token lives in xero-node's private
+   * `_tokenSet`. So a known tenant plus a future timestamp skipped the refresh even with no
+   * usable token behind it. Reading the token set is what makes the gate mean what it says.
+   *
+   * `tenantId` is still required, because `refreshAndUpdate()` is also what populates it.
+   */
+  private hasUsableAccessToken(): boolean {
     const nowSec = Math.floor(Date.now() / 1000);
-    if (
-      this.tenantId &&
-      this.accessTokenExpiresAt > nowSec + ACCESS_TOKEN_REFRESH_BUFFER_SECONDS
-    ) {
+    if (!this.tenantId) return false;
+    if (this.accessTokenExpiresAt <= nowSec + ACCESS_TOKEN_REFRESH_BUFFER_SECONDS) {
+      return false;
+    }
+    return Boolean(this.readTokenSet()?.access_token);
+  }
+
+  /**
+   * Force the next `authenticate()` to mint a new access token.
+   *
+   * Called by the reauth-retry wrapper in MCPXeroClient when Xero answers 401. Zeroing the
+   * expiry is enough — and is all that should happen. In particular `currentRefreshToken` is
+   * left alone: clearing it would make `usedCachedToken` false on the next attempt, which
+   * disables the `invalid_grant` retry below and converts a recoverable rotation race into a
+   * "re-run the bootstrap script" dead end.
+   */
+  public invalidateAccessToken(): void {
+    this.accessTokenExpiresAt = 0;
+  }
+
+  public async authenticate(): Promise<void> {
+    if (this.hasUsableAccessToken()) {
       return;
     }
 
@@ -85,11 +115,7 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
   private async refreshAndUpdate(): Promise<void> {
     // Re-check inside the critical section: a refresh we queued behind may have
     // just populated a valid token.
-    const nowSec = Math.floor(Date.now() / 1000);
-    if (
-      this.tenantId &&
-      this.accessTokenExpiresAt > nowSec + ACCESS_TOKEN_REFRESH_BUFFER_SECONDS
-    ) {
+    if (this.hasUsableAccessToken()) {
       return;
     }
 
@@ -142,8 +168,12 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
       this.currentRefreshToken = tokenSet.refresh_token;
     }
 
+    // Read the clock HERE. It used to come from a `nowSec` captured before the Secret
+    // Manager read and the Xero token round trip, so the fallback expiry was short by
+    // however long those took — harmless against a 60s buffer, but wrong for no reason.
     this.accessTokenExpiresAt =
-      tokenSet.expires_at ?? nowSec + (tokenSet.expires_in ?? 1800);
+      tokenSet.expires_at ??
+      Math.floor(Date.now() / 1000) + (tokenSet.expires_in ?? 1800);
 
     if (!this.tenantId) {
       await this.updateTenants(false);
@@ -161,9 +191,23 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
 
   private async readLatestRefreshToken(): Promise<string> {
     const client = await this.getSecretClient();
-    const [version] = await client.accessSecretVersion({
-      name: `${this.secretName}/versions/latest`,
+
+    // The newest ENABLED version, explicitly — not the `latest` alias, which resolves
+    // regardless of state and makes accessSecretVersion throw FAILED_PRECONDITION on a
+    // disabled version instead of falling back. See token-recovery.ts.
+    const [versions] = await client.listSecretVersions({
+      parent: this.secretName,
+      filter: "state:ENABLED",
     });
+    const newest = newestEnabledVersion(versions);
+    if (!newest) {
+      throw new Error(
+        `Secret ${this.secretName} has no enabled version. Re-run the bootstrap script ` +
+          `(bin/xero-oauth-bootstrap.ts) for this user.`,
+      );
+    }
+
+    const [version] = await client.accessSecretVersion({ name: newest });
     const data = version.payload?.data;
     if (!data) {
       throw new Error(
@@ -186,8 +230,9 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     this.latestVersionName = created.name ?? null;
 
     void this.disableOldVersions().catch(() => {
-      // best effort — old refresh tokens are already dead with Xero,
-      // so leaving them enabled in Secret Manager is a cosmetic issue only.
+      // Best effort, but NOT cosmetic: Xero's rotation is single-use, so the stored secret
+      // is the only copy of a live credential. Disabling the wrong version locks the user
+      // out entirely. See versionsToDisable().
     });
   }
 
@@ -197,12 +242,12 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     const [versions] = await client.listSecretVersions({
       parent: this.secretName,
     });
-    for (const v of versions) {
-      if (!v.name || v.name === this.latestVersionName) continue;
-      const stateLabel =
-        typeof v.state === "string" ? v.state : String(v.state ?? "");
-      if (stateLabel === "ENABLED" || stateLabel === "1" || v.state === 1) {
-        await client.disableSecretVersion({ name: v.name });
+    for (const name of versionsToDisable(versions, this.latestVersionName)) {
+      try {
+        await client.disableSecretVersion({ name });
+      } catch {
+        // A peer may have disabled it already, or a transient API error — don't let one
+        // failure skip cleanup of the remaining older versions.
       }
     }
   }
