@@ -105,29 +105,38 @@ jobs:
 
       - name: Smoke-test the image
         run: |
+          # Unique name + an EPHEMERAL host port. Both used to be fixed
+          # (`--name <svc>-smoke -p 18080:8080`), so two runs overlapping on the
+          # self-hosted runner collided and one failed with
+          # 'container name is already in use' or a port bind error — a flake that
+          # looked like the PR's fault. Observed on hubspot-custom-mcp#49.
+          CTR=xero-mcp-smoke-${{ github.run_id }}-${{ github.run_attempt }}
+          trap 'docker rm -f "$CTR" >/dev/null 2>&1 || true' EXIT
           # Boot the container with fake env, confirm:
           #   1. it stays running for >5s
           #   2. /healthz responds 200 (proves the express server is up)
-          docker run -d --name xero-mcp-smoke -p 18080:8080 \
-            -e PUBLIC_URL=http://localhost:18080 \
+          docker run -d --name "$CTR" -p 0:8080 \
+            -e PUBLIC_URL=http://localhost:8080 \
             -e GCP_PROJECT=ci-smoke \
             -e XERO_APP_CLIENT_ID=ci-smoke \
             -e XERO_APP_CLIENT_SECRET=ci-smoke \
             -e MCP_JWT_SECRET=ci-smoke-secret-do-not-trust \
             xero-mcp-server:ci-${{ github.sha }}
+          PORT=$(docker port "$CTR" 8080/tcp | head -1 | sed 's/.*://')
+          echo "smoke container $CTR on host port $PORT"
           sleep 5
-          STATE=$(docker inspect -f '{{.State.Status}}' xero-mcp-smoke)
+          STATE=$(docker inspect -f '{{.State.Status}}' "$CTR")
           if [ "$STATE" != "running" ]; then
             echo "::error::container is in state '$STATE' after 5s"
-            docker logs xero-mcp-smoke
-            docker rm -f xero-mcp-smoke
+            docker logs "$CTR"
+            docker rm -f "$CTR"
             exit 1
           fi
-          if ! curl -fsS --max-time 5 http://localhost:18080/healthz | grep -q '"ok"'; then
+          if ! curl -fsS --max-time 5 http://localhost:$PORT/healthz | grep -q '"ok"'; then
             echo "::error::/healthz did not return ok"
-            docker logs xero-mcp-smoke
-            docker rm -f xero-mcp-smoke
+            docker logs "$CTR"
+            docker rm -f "$CTR"
             exit 1
           fi
           echo "Container is running and /healthz returns ok."
-          docker rm -f xero-mcp-smoke
+          docker rm -f "$CTR"
