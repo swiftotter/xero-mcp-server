@@ -30,6 +30,7 @@
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",
     "@modelcontextprotocol/sdk": "^1.26.0",
+    "axios": "^1.19.0",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
@@ -55,7 +56,6 @@
     "hono": "^4.12.25",
     "protobufjs": "^7.6.4",
     "form-data": "^4.0.6",
-    "axios": "^1.18.0",
     "brace-expansion": "^2.1.4",
     "fast-uri": "^3.1.5",
     "ip-address": "^10.3.1"
@@ -66,12 +66,6 @@
     "range off the advisory rather than trusting this note. Several of these were already",
     "resolved at a version a later advisory then covered, which is how CI went red on main",
     "with no dependency change on our side.",
-    "",
-    "axios: arrives via xero-node, which declares ^1.7.7. Advisories cover 1.0.0 - 1.17.0",
-    "and we resolved exactly 1.17.0, so the floor is 1.18.0. NOTE: src/clients/xero-client.ts",
-    "imports axios directly while package.json does not declare it \u2014 a phantom dependency",
-    "that works only because xero-node hoists it. Worth declaring properly; out of scope for",
-    "a CI fix.",
     "",
     "brace-expansion: STAY IN THE 2.x LINE. It arrives via @google-cloud/secret-manager ->",
     "google-gax -> rimraf -> glob -> minimatch@9, and the advisories cover 2.0.0 - 2.1.3, so",
@@ -88,6 +82,11 @@
     "would not accept a major.",
     "",
     "ip-address: @modelcontextprotocol/sdk -> express-rate-limit, which declares ^10.2.0.",
-    "SSRF / trust-boundary advisories cover <=10.3.0, so the floor is 10.3.1."
+    "SSRF / trust-boundary advisories cover <=10.3.0, so the floor is 10.3.1.",
+    "",
+    "axios is NOT here: it is a direct dependency now. src/clients/xero-client.ts,",
+    "auth/authorization-code-xero-client.ts and helpers/format-error.ts all import it, so",
+    "declaring it is correct regardless of advisories \u2014 the floor ^1.19.0 already clears",
+    "the 1.0.0-1.17.0 range, which makes the override redundant."
   ]
 }
