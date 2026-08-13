@@ -21,12 +21,30 @@
 // 0 >= 0; write tools publish one EXTRA property (the injected `confirm`), so
 // >= still holds; only a tool that declares N params but publishes fewer fails.
 //
+// It also guards the JSON-string argument coercion (coerceJsonishShape, applied
+// in ToolFactory's register()). That shim exists because some clients serialize a
+// complex argument as a JSON string — Cowork sends create-manual-journal's
+// `manualJournalLines` as "[{…},{…}]" — and it must be INVISIBLE: same published
+// schema, scalars still strict.
+//
 // Pass criteria:
 //   1. Every declared tool is present on tools/list.
 //   2. Every published tool has inputSchema.type === "object" and does NOT drop
 //      declared properties.
 //   3. update-invoice publishes the real types (the tool the bug hit):
 //      invoiceId + purpose present, lineItems is an array, confirm is a boolean.
+//   4. No schema drift: every tool's published inputSchema is deep-equal to what
+//      the same tool publishes when registered WITHOUT the coercion shim.
+//   5. A JSON-string array is accepted: create-manual-journal called with
+//      `manualJournalLines` as a string (and no confirm) returns the write
+//      preview — validation passed and the gate held, with no Xero traffic.
+//   6. Nested case: create-invoice with a real lineItems array whose `tracking`
+//      is a JSON string also reaches the preview. And the object branch, which
+//      no array case exercises: add-timesheet-line with its `timesheetLine`
+//      object as a JSON string.
+//   7. Coercion stays narrow: a non-JSON string still fails with the original
+//      "Expected array" error, and confirm:"true" is still rejected (a
+//      stringified boolean must never satisfy the confirmation gate).
 
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -47,6 +65,9 @@ const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
 const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
 
 const { ToolFactory } = await distImport("tools/tool-factory.js");
+const { requireWriteConfirmation } = await distImport(
+  "helpers/require-write-confirmation.js",
+);
 const { CreateTools } = await distImport("tools/create/index.js");
 const { DeleteTools } = await distImport("tools/delete/index.js");
 const { GetTools } = await distImport("tools/get/index.js");
@@ -119,6 +140,181 @@ if (!ui) {
   } else {
     fail("update-invoice publishes real types (lineItems:array, confirm:boolean)", problems.join("; "));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Check 4: the JSON-string coercion shim must not change a published schema.
+//
+// Register the same tools on a second server with the RAW shapes (no
+// coerceJsonishShape) and deep-compare per tool. Write tools get `confirm`
+// injected by the real requireWriteConfirmation so the property sets match; the
+// action argument only affects description text, never the schema, so passing
+// "create" for all of them is fine here.
+// ---------------------------------------------------------------------------
+const writeNames = new Set(
+  [...CreateTools, ...DeleteTools, ...UpdateTools].map((factory) => factory().name),
+);
+writeNames.add("get-attachment"); // annotated as a write in ToolFactory
+
+const rawServer = new McpServer({ name: "verify-raw", version: "0.0.0" });
+for (const group of [CreateTools, DeleteTools, GetTools, ListTools, UpdateTools]) {
+  for (const factory of group) {
+    let tool = factory();
+    if (writeNames.has(tool.name)) tool = requireWriteConfirmation("create", tool);
+    rawServer.registerTool(
+      tool.name,
+      { description: tool.description, inputSchema: tool.schema },
+      tool.handler,
+    );
+  }
+}
+const [rawClientTransport, rawServerTransport] = InMemoryTransport.createLinkedPair();
+await rawServer.connect(rawServerTransport);
+const rawClient = new Client({ name: "verify-raw", version: "0.0.0" });
+await rawClient.connect(rawClientTransport);
+const rawByName = Object.fromEntries(
+  (await rawClient.listTools()).tools.map((t) => [t.name, t]),
+);
+
+// Key order can differ between two conversions of the same shape; compare on
+// value, not on serialization order.
+const stable = (value) => {
+  if (Array.isArray(value)) return value.map(stable);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((k) => [k, stable(value[k])]),
+    );
+  }
+  return value;
+};
+const stableJson = (value) => JSON.stringify(stable(value));
+
+const drifted = [];
+for (const tool of tools) {
+  const raw = rawByName[tool.name];
+  if (!raw) {
+    drifted.push(`${tool.name} (missing from raw registration)`);
+    continue;
+  }
+  if (stableJson(tool.inputSchema) !== stableJson(raw.inputSchema)) {
+    drifted.push(tool.name);
+  }
+}
+if (drifted.length === 0) {
+  pass("JSON-string coercion does not change any published schema", `${tools.length} tools compared`);
+} else {
+  fail(
+    "JSON-string coercion does not change any published schema",
+    `drifted: ${drifted.join(", ")}`,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Checks 5-7: the coercion behaves at call time. These all stop at the write
+// confirmation gate, so nothing reaches Xero.
+// ---------------------------------------------------------------------------
+const callText = async (name, args) => {
+  try {
+    const result = await client.callTool({ name, arguments: args });
+    return result?.content?.[0]?.text ?? JSON.stringify(result);
+  } catch (error) {
+    return `THREW: ${error.message}`;
+  }
+};
+
+const journalLines = [
+  { lineAmount: 100, accountCode: "200", description: "coercion check" },
+  { lineAmount: -100, accountCode: "400", description: "coercion check" },
+];
+
+const stringifiedArrayText = await callText("create-manual-journal", {
+  narration: "schema verification — never written",
+  manualJournalLines: JSON.stringify(journalLines),
+  purpose: "verify JSON-string array coercion",
+});
+if (stringifiedArrayText.startsWith("[CONFIRMATION REQUIRED")) {
+  pass("stringified manualJournalLines is accepted (and stops at the gate)");
+} else {
+  fail(
+    "stringified manualJournalLines is accepted (and stops at the gate)",
+    `got: ${stringifiedArrayText.slice(0, 160)}…`,
+  );
+}
+
+const nestedText = await callText("create-invoice", {
+  type: "ACCREC",
+  contactId: "00000000-0000-0000-0000-000000000000",
+  lineItems: [
+    {
+      description: "coercion check",
+      quantity: 1,
+      unitAmount: 1,
+      accountCode: "200",
+      taxType: "NONE",
+      tracking: JSON.stringify([
+        { name: "Main", option: "Build", trackingCategoryID: "00000000-0000-0000-0000-000000000000" },
+      ]),
+    },
+  ],
+  purpose: "verify nested JSON-string array coercion",
+});
+if (nestedText.startsWith("[CONFIRMATION REQUIRED")) {
+  pass("stringified nested tracking array is accepted");
+} else {
+  fail("stringified nested tracking array is accepted", `got: ${nestedText.slice(0, 160)}…`);
+}
+
+// The ZodObject branch of the coercion needs its own call-time check: several
+// tools take a required, non-array object param, and check 4 cannot see this gap
+// (a no-op object branch publishes an identical schema), so a regression that
+// disabled object coercion while leaving arrays working would otherwise pass.
+const objectParamText = await callText("add-timesheet-line", {
+  timesheetID: "00000000-0000-0000-0000-000000000000",
+  timesheetLine: JSON.stringify({
+    earningsRateID: "00000000-0000-0000-0000-000000000000",
+    numberOfUnits: 8,
+    date: "2026-01-01",
+  }),
+  purpose: "verify JSON-string object coercion",
+});
+if (objectParamText.startsWith("[CONFIRMATION REQUIRED")) {
+  pass("stringified object param (timesheetLine) is accepted");
+} else {
+  fail(
+    "stringified object param (timesheetLine) is accepted",
+    `got: ${objectParamText.slice(0, 160)}…`,
+  );
+}
+
+const notJsonText = await callText("create-manual-journal", {
+  narration: "schema verification — never written",
+  manualJournalLines: "not json",
+  purpose: "verify non-JSON string still fails",
+});
+if (/Expected array, received string/.test(notJsonText)) {
+  pass("a non-JSON string still fails with the original type error");
+} else {
+  fail(
+    "a non-JSON string still fails with the original type error",
+    `got: ${notJsonText.slice(0, 160)}…`,
+  );
+}
+
+const stringConfirmText = await callText("create-manual-journal", {
+  narration: "schema verification — never written",
+  manualJournalLines: journalLines,
+  purpose: "verify stringified boolean cannot confirm",
+  confirm: "true",
+});
+if (/Expected boolean, received string/.test(stringConfirmText)) {
+  pass('confirm:"true" is still rejected (scalars stay strict)');
+} else {
+  fail(
+    'confirm:"true" is still rejected (scalars stay strict)',
+    `got: ${stringConfirmText.slice(0, 160)}…`,
+  );
 }
 
 console.log("\n=== Tool Schema Verification ===\n");
