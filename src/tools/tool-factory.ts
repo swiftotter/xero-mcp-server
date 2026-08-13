@@ -12,6 +12,7 @@ import {
   requireWriteConfirmation,
   type WriteAction,
 } from "../helpers/require-write-confirmation.js";
+import { coerceJsonishShape } from "../helpers/coerce-jsonish-args.js";
 
 function inferUpdateAction(name: string): WriteAction {
   if (name.startsWith("approve-")) return "approve";
@@ -27,6 +28,15 @@ function inferUpdateAction(name: string): WriteAction {
 // misread as annotations and the tool publishes an EMPTY input schema, which
 // makes clients send every argument as a string and breaks confirmed writes.
 // Passing the schema by an explicit named field removes that ambiguity for good.
+//
+// A correct schema is not enough on its own, though: some clients stringify a
+// complex argument even when the published schema says array (Cowork sends
+// create-manual-journal's `manualJournalLines` as a JSON string). Every tool
+// funnels through here, so coerceJsonishShape() is applied once at this choke
+// point — it makes array/object arguments tolerant of a JSON-string encoding
+// while leaving scalars strict and the published schema byte-identical. It runs
+// after requireWriteConfirmation() has injected `confirm`, so that field is
+// covered too (a boolean, so it passes through untouched).
 function register(
   server: McpServer,
   tool: ToolDefinition<ZodRawShapeCompat>,
@@ -34,7 +44,11 @@ function register(
 ): void {
   server.registerTool(
     tool.name,
-    { description: tool.description, inputSchema: tool.schema, annotations },
+    {
+      description: tool.description,
+      inputSchema: coerceJsonishShape(tool.schema),
+      annotations,
+    },
     tool.handler,
   );
 }
