@@ -1,5 +1,9 @@
 import { z } from "zod";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
+import {
+  formatAccountRef,
+  getAccountNameMap,
+} from "../../helpers/account-names.js";
 import { createXeroManualJournal } from "../../handlers/create-xero-manual-journal.handler.js";
 import { DeepLinkType, getDeepLink } from "../../helpers/get-deeplink.js";
 import { ensureError } from "../../helpers/ensure-error.js";
@@ -104,6 +108,7 @@ const CreateManualJournalTool = CreateXeroTool(
       }
 
       const manualJournal = response.result;
+      const accountNames = await getAccountNameMap();
       const deepLink = manualJournal.manualJournalID
         ? await getDeepLink(
             DeepLinkType.MANUAL_JOURNAL,
@@ -127,7 +132,7 @@ const CreateManualJournalTool = CreateXeroTool(
                     text: [
                       `Line Amount: ${line.lineAmount}`,
                       line.accountCode
-                        ? `Account Code: ${line.accountCode}`
+                        ? `Account: ${formatAccountRef(line.accountCode, accountNames)}`
                         : "No account code",
                       line.description
                         ? `Description: ${line.description}`

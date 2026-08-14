@@ -2,6 +2,10 @@ import { z } from "zod";
 import { listXeroInvoices } from "../../handlers/list-xero-invoices.handler.js";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
 import { formatLineItem } from "../../helpers/format-line-item.js";
+import {
+  formatAccountRef,
+  getAccountNameMap,
+} from "../../helpers/account-names.js";
 
 const ListInvoicesTool = CreateXeroTool(
   "list-invoices",
@@ -93,13 +97,16 @@ const ListInvoicesTool = CreateXeroTool(
       lineItems === true ||
       (invoiceNumbers?.length ?? 0) > 0 ||
       accountCode !== undefined;
+    const accountNames = returnLineItems
+      ? await getAccountNameMap()
+      : new Map<string, string>();
 
     return {
       content: [
         {
           type: "text" as const,
           text: accountCode
-            ? `Found ${invoices?.length || 0} invoice(s) on this page with a line item on account ${accountCode} (filtered client-side — page through for more):`
+            ? `Found ${invoices?.length || 0} invoice(s) on this page with a line item on account ${formatAccountRef(accountCode, accountNames)} (filtered client-side — page through for more):`
             : `Found ${invoices?.length || 0} invoices:`,
         },
         ...(invoices?.map((invoice) => ({
@@ -142,7 +149,7 @@ const ListInvoicesTool = CreateXeroTool(
             invoice.hasErrors ? "Has Errors: Yes" : null,
             invoice.isDiscounted ? "Is Discounted: Yes" : null,
             returnLineItems
-              ? `Line Items:\n${invoice.lineItems?.map(formatLineItem).join("\n\n")}`
+              ? `Line Items:\n${invoice.lineItems?.map((li) => formatLineItem(li, accountNames)).join("\n\n")}`
               : null,
           ]
             .filter(Boolean)

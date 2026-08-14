@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { listXeroItems } from "../../handlers/list-xero-items.handler.js";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
+import {
+  formatAccountRef,
+  getAccountNameMap,
+} from "../../helpers/account-names.js";
 
 const ListItemsTool = CreateXeroTool(
   "list-items",
@@ -23,6 +27,7 @@ const ListItemsTool = CreateXeroTool(
     }
 
     const items = response.result;
+    const accountNames = await getAccountNameMap();
 
     return {
       content: [
@@ -40,8 +45,8 @@ const ListItemsTool = CreateXeroTool(
             item.purchaseDescription ? `Purchase Description: ${item.purchaseDescription}` : null,
             item.salesDetails?.unitPrice !== undefined ? `Sales Price: ${item.salesDetails.unitPrice}` : null,
             item.purchaseDetails?.unitPrice !== undefined ? `Purchase Price: ${item.purchaseDetails.unitPrice}` : null,
-            item.salesDetails?.accountCode ? `Sales Account: ${item.salesDetails.accountCode}` : null,
-            item.purchaseDetails?.accountCode ? `Purchase Account: ${item.purchaseDetails.accountCode}` : null,
+            item.salesDetails?.accountCode ? `Sales Account: ${formatAccountRef(item.salesDetails.accountCode, accountNames)}` : null,
+            item.purchaseDetails?.accountCode ? `Purchase Account: ${formatAccountRef(item.purchaseDetails.accountCode, accountNames)}` : null,
             item.isTrackedAsInventory !== undefined ? `Tracked as Inventory: ${item.isTrackedAsInventory ? 'Yes' : 'No'}` : null,
             item.isSold !== undefined ? `Is Sold: ${item.isSold ? 'Yes' : 'No'}` : null,
             item.isPurchased !== undefined ? `Is Purchased: ${item.isPurchased ? 'Yes' : 'No'}` : null,

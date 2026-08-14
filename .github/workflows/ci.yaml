@@ -90,6 +90,14 @@ jobs:
       - name: Verify write-confirmation gate
         run: npm run verify:confirmation-gate
 
+      # Xero returns only `accountCode` on line items — the name lives on the
+      # separate chart-of-accounts resource. Every renderer must join against it
+      # or output degrades to bare numbers ("2230") that mean nothing to a reader,
+      # which is exactly what this fixed. Dropping the join breaks nothing else:
+      # output stays well-formed, just unreadable. Hence an explicit guard.
+      - name: Verify GL accounts render by name
+        run: npm run verify:account-names
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest
