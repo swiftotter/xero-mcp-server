@@ -101,7 +101,7 @@ If a full page is returned, more may exist — call again with page+1.`,
         {
           type: "text" as const,
           text: args?.accountCode
-            ? `Found ${manualJournals?.length || 0} manual journal(s) on this page with a line on account ${args.accountCode} (filtered client-side — page through for more):`
+            ? `Found ${manualJournals?.length || 0} manual journal(s) on this page with a line on account ${formatAccountRef(args.accountCode, accountNames)} (filtered client-side — page through for more):`
             : `Found ${manualJournals?.length || 0} manual journals:`,
         },
         ...(manualJournals?.map((journal: ManualJournal) => ({

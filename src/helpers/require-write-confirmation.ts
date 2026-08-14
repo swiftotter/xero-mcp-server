@@ -37,11 +37,9 @@ export function collectAccountCodes(value: unknown, found: Set<string>): void {
  * chart-of-accounts lookup came back empty — so the preview never regresses.
  */
 export function buildAccountLegend(
-  args: unknown,
+  codes: ReadonlySet<string>,
   accountNames: AccountNameMap,
 ): string | null {
-  const codes = new Set<string>();
-  collectAccountCodes(args, codes);
   if (codes.size === 0) return null;
 
   const named = [...codes]
@@ -55,19 +53,19 @@ export function buildAccountLegend(
 }
 
 async function accountLegend(args: unknown): Promise<string | null> {
-  // Skip the lookup entirely when there is nothing to name.
+  // Walk once, and skip the lookup entirely when there is nothing to name.
   const codes = new Set<string>();
   collectAccountCodes(args, codes);
   if (codes.size === 0) return null;
 
-  return buildAccountLegend(args, await getAccountNameMap());
+  return buildAccountLegend(codes, await getAccountNameMap());
 }
 
 const confirmField = z
   .boolean()
   .optional()
   .describe(
-    "Set to true to actually execute this write. If omitted or false, the tool returns a preview describing what would happen and does NOT call Xero. After receiving a preview, show it to the user verbatim, summarize the impact in plain English, and wait for explicit approval before re-calling with confirm: true.",
+    "Set to true to actually execute this write. If omitted or false, the tool returns a preview describing what would happen and writes NOTHING to Xero (it may make a read-only lookup to name the accounts involved). After receiving a preview, show it to the user verbatim, summarize the impact in plain English, and wait for explicit approval before re-calling with confirm: true.",
   );
 
 export function requireWriteConfirmation(

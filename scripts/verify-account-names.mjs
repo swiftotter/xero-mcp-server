@@ -22,10 +22,15 @@
 //      That preview dumps raw parameters as JSON — bare "accountCode": "2230" —
 //      and the user is told to read it verbatim before approving a write, so it
 //      is the one surface where an unnamed code costs the most.
-//   6. No source file under src/ still emits a bare "Account Code: ${...}" —
-//      the exact regression that reintroduces the original bug.
+//   6. The cache: reuse within the TTL, refetch after it, concurrent callers
+//      share one load, a FAILED load is never cached (so the next call retries),
+//      and a successful-but-empty chart of accounts IS cached.
+//   7. No source file interpolates an `accountCode` without routing it through
+//      formatAccountRef — the exact regression that reintroduces the original
+//      bug, in any phrasing.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve, join, relative } from "node:path";
 
@@ -100,9 +105,15 @@ assert(
 );
 
 // 5: write-confirmation preview legend
-const { buildAccountLegend } = await import(
+const { buildAccountLegend, collectAccountCodes } = await import(
   resolve(ROOT, "dist", "helpers", "require-write-confirmation.js")
 );
+
+const codesOf = (args) => {
+  const found = new Set();
+  collectAccountCodes(args, found);
+  return found;
+};
 
 // Shaped like real create-invoice / create-manual-journal arguments: the codes
 // live inside a nested array of line objects, not at the top level.
@@ -115,23 +126,94 @@ const writeArgs = {
 };
 
 assert(
-  buildAccountLegend(writeArgs, names) ===
+  buildAccountLegend(codesOf(writeArgs), names) ===
     "Accounts referenced: 2230 = Accrued Payroll, 4000 = Sales",
   "write preview names every account referenced in nested line items",
-  String(buildAccountLegend(writeArgs, names)),
+  String(buildAccountLegend(codesOf(writeArgs), names)),
 );
 assert(
-  buildAccountLegend(writeArgs, EMPTY) === null,
+  buildAccountLegend(codesOf(writeArgs), EMPTY) === null,
   "write preview omits the legend entirely on a failed lookup",
-  String(buildAccountLegend(writeArgs, EMPTY)),
+  String(buildAccountLegend(codesOf(writeArgs), EMPTY)),
 );
 assert(
-  buildAccountLegend({ contactId: "abc", reference: "no accounts" }, names) ===
-    null,
+  buildAccountLegend(
+    codesOf({ contactId: "abc", reference: "no accounts" }),
+    names,
+  ) === null,
   "write preview omits the legend when no account is referenced",
 );
 
-// 6: no source file reintroduces a bare account code
+// 6: the cache itself — TTL reuse, concurrent de-duplication, no-cache-on-failure.
+// Exercised against a stub loader, so this stays offline.
+const { createAccountNameCache } = await import(
+  resolve(ROOT, "dist", "helpers", "account-names.js")
+);
+
+let loads = 0;
+const ttlCache = createAccountNameCache(async () => {
+  loads++;
+  return names;
+}, 60);
+await ttlCache.get();
+await ttlCache.get();
+assert(loads === 1, "second call within the TTL reuses the cached map", `loads=${loads}`);
+await sleep(80);
+await ttlCache.get();
+assert(loads === 2, "a call after the TTL expires refetches", `loads=${loads}`);
+
+let concurrentLoads = 0;
+const dedupeCache = createAccountNameCache(async () => {
+  concurrentLoads++;
+  await sleep(20);
+  return names;
+});
+const parallel = await Promise.all(
+  Array.from({ length: 5 }, () => dedupeCache.get()),
+);
+assert(
+  concurrentLoads === 1,
+  "five concurrent callers share ONE load (in-flight de-duplication)",
+  `loads=${concurrentLoads}`,
+);
+assert(
+  parallel.every((map) => map.get("2230") === "Accrued Payroll"),
+  "every concurrent caller receives the loaded map",
+);
+
+let failLoads = 0;
+const failCache = createAccountNameCache(async () => {
+  failLoads++;
+  throw new Error("Xero unavailable");
+});
+const failed1 = await failCache.get();
+assert(
+  failed1.size === 0,
+  "a throwing loader resolves to an empty map, never rejects",
+);
+await failCache.get();
+assert(
+  failLoads === 2,
+  "a failed lookup is NOT cached — the next call retries",
+  `loads=${failLoads}`,
+);
+
+// An org with no accounts is a real answer, distinct from a failure, so it must
+// be cached — otherwise every tool call refetches forever.
+let emptyLoads = 0;
+const emptyCache = createAccountNameCache(async () => {
+  emptyLoads++;
+  return new Map();
+});
+await emptyCache.get();
+await emptyCache.get();
+assert(
+  emptyLoads === 1,
+  "a successful but EMPTY chart of accounts is cached, not retried forever",
+  `loads=${emptyLoads}`,
+);
+
+// 7: no source file reintroduces a bare account code
 function walk(dir, out = []) {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
@@ -141,17 +223,28 @@ function walk(dir, out = []) {
   return out;
 }
 
-// Matches `Account Code: ${...}` in a template literal — the un-joined render.
-// A plain "accountCode" identifier (schemas, filters, handlers) is fine.
-const BARE = /Account Code:\s*\$\{/;
-const offenders = walk(resolve(ROOT, "src"))
-  .filter((file) => BARE.test(readFileSync(file, "utf8")))
-  .map((file) => relative(ROOT, file));
+// Any template interpolation of an accountCode that isn't routed through
+// formatAccountRef renders a bare number to the user. Matching the interpolation
+// (rather than one fixed label like "Account Code: ${") is deliberate: the first
+// version of this guard checked only that label and missed
+// `on account ${accountCode}` in the list-invoices/list-manual-journals filter
+// summaries — a real instance of this very bug. A plain `accountCode` identifier
+// outside a template literal (schemas, filters, handlers) is fine.
+const INTERPOLATED = /\$\{[^}]*accountCode[^}]*\}/gi;
+const offenders = [];
+for (const file of walk(resolve(ROOT, "src"))) {
+  const bare = (readFileSync(file, "utf8").match(INTERPOLATED) ?? []).filter(
+    (match) => !match.includes("formatAccountRef"),
+  );
+  if (bare.length > 0) {
+    offenders.push(`${relative(ROOT, file)}: ${bare.join(" | ")}`);
+  }
+}
 
 assert(
   offenders.length === 0,
-  "no source file emits a bare 'Account Code: ${...}'",
-  offenders.join(", "),
+  "no source file interpolates an accountCode without formatAccountRef",
+  offenders.join("; "),
 );
 
 let failed = 0;
