@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
 import { listXeroBankTransactions } from "../../handlers/list-xero-bank-transactions.handler.js";
 import { formatLineItem } from "../../helpers/format-line-item.js";
+import { getAccountNameMap } from "../../helpers/account-names.js";
 
 const ListBankTransactionsTool = CreateXeroTool(
   "list-bank-transactions",
@@ -45,6 +46,7 @@ const ListBankTransactionsTool = CreateXeroTool(
     }
 
     const bankTransactions = response.result;
+    const accountNames = await getAccountNameMap();
 
     return {
       content: [
@@ -72,7 +74,7 @@ const ListBankTransactionsTool = CreateXeroTool(
             transaction.hasAttachments !== undefined
               ? (transaction.hasAttachments ? "Has attachments" : "Does not have attachments")
               : null,
-            `Line Items:\n${transaction.lineItems?.map(formatLineItem).join("\n\n")}`,
+            `Line Items:\n${transaction.lineItems?.map((li) => formatLineItem(li, accountNames)).join("\n\n")}`,
           ].filter(Boolean).join("\n")
         })) || [])
       ]

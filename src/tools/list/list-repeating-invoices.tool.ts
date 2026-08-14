@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
 import { listXeroRepeatingInvoices } from "../../handlers/list-xero-repeating-invoices.handler.js";
 import { formatLineItem } from "../../helpers/format-line-item.js";
+import { getAccountNameMap } from "../../helpers/account-names.js";
 
 const ListRepeatingInvoicesTool = CreateXeroTool(
   "list-repeating-invoices",
@@ -35,6 +36,7 @@ Use the optional `where` parameter to filter (e.g. Status==\"AUTHORISED\") and `
     }
 
     const items = response.result;
+    const accountNames = await getAccountNameMap();
 
     return {
       content: [
@@ -61,7 +63,7 @@ Use the optional `where` parameter to filter (e.g. Status==\"AUTHORISED\") and `
               ri.total !== undefined ? `Total: ${ri.total}` : null,
               ri.approvedForSending ? "Approved for sending: yes" : null,
               ri.lineItems?.length
-                ? `Line Items:\n${ri.lineItems.map(formatLineItem).join("\n\n")}`
+                ? `Line Items:\n${ri.lineItems.map((li) => formatLineItem(li, accountNames)).join("\n\n")}`
                 : null,
             ]
               .filter(Boolean)

@@ -1,6 +1,10 @@
 import { ManualJournal } from "xero-node";
 import { listXeroManualJournals } from "../../handlers/list-xero-manual-journals.handler.js";
 import { CreateXeroTool } from "../../helpers/create-xero-tool.js";
+import {
+  formatAccountRef,
+  getAccountNameMap,
+} from "../../helpers/account-names.js";
 import { z } from "zod";
 
 const ListManualJournalsTool = CreateXeroTool(
@@ -90,6 +94,7 @@ If a full page is returned, more may exist — call again with page+1.`,
     }
 
     const manualJournals = response.result;
+    const accountNames = await getAccountNameMap();
 
     return {
       content: [
@@ -112,7 +117,7 @@ If a full page is returned, more may exist — call again with page+1.`,
                   [
                     `Line Amount: ${line.lineAmount}`,
                     line.accountCode
-                      ? `Account Code: ${line.accountCode}`
+                      ? `Account: ${formatAccountRef(line.accountCode, accountNames)}`
                       : "No account code",
                     line.description
                       ? `Description: ${line.description}`

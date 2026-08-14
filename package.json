@@ -25,6 +25,7 @@
     "verify:stateless": "node scripts/verify-stateless-mcp.mjs",
     "verify:schemas": "node scripts/verify-tool-schemas.mjs",
     "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs",
+    "verify:account-names": "node scripts/verify-account-names.mjs",
     "verify:auth-recovery": "node scripts/verify-auth-recovery.mjs"
   },
   "dependencies": {
