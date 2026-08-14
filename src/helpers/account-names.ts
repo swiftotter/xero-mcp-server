@@ -28,7 +28,6 @@ export type AccountNameLoader = () => Promise<AccountNameMap | null>;
 
 export interface AccountNameCache {
   get(): Promise<AccountNameMap>;
-  reset(): void;
 }
 
 /**
@@ -72,12 +71,6 @@ export function createAccountNameCache(
         });
 
       return inFlight;
-    },
-
-    reset(): void {
-      cached = null;
-      cachedAt = 0;
-      inFlight = null;
     },
   };
 }
