@@ -22,7 +22,7 @@ import {
 } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
-import { versionsToDestroy } from "./clients/auth/token-recovery.js";
+import { destroySupersededVersions } from "./clients/auth/token-recovery.js";
 import {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -475,35 +475,13 @@ export class XeroChainedOAuthProvider implements OAuthServerProvider {
     // version here and this path had no cleanup at all, so each one was a permanent
     // monthly charge. Best effort and not awaited into the failure path: a connect that
     // already stored its token must report success even if cleanup fails.
-    void this.destroySupersededVersions(secretName, created.name ?? null).catch(
-      () => {},
-    );
+    void destroySupersededVersions(
+      this.config.secretManager,
+      secretName,
+      created.name ?? null,
+    ).catch(() => {});
   }
 
-  private async destroySupersededVersions(
-    secretName: string,
-    justWritten: string | null,
-  ): Promise<void> {
-    if (!justWritten) return;
-    // DESTROYED rows stay in the listing forever, so filter them out — otherwise the
-    // secrets that rotate most often re-scan the longest destroyed tail on every pass.
-    // Filtering to NOT-destroyed rather than to state:ENABLED is deliberate: a version
-    // left DISABLED by the old cleanup is still billed, and excluding those is exactly
-    // what let the backlog grow unbounded. versionsToDestroy() re-checks state anyway,
-    // so this is an optimisation, not the correctness boundary.
-    const [versions] = await this.config.secretManager.listSecretVersions({
-      parent: secretName,
-      filter: "NOT state:DESTROYED",
-    });
-    for (const name of versionsToDestroy(versions, justWritten)) {
-      try {
-        await this.config.secretManager.destroySecretVersion({ name });
-      } catch {
-        // A peer may have destroyed it already, or a transient API error — don't let
-        // one failure skip cleanup of the remaining older versions.
-      }
-    }
-  }
 
   private issueTokens(
     clientId: string,

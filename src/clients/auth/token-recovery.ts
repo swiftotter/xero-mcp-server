@@ -140,3 +140,55 @@ export function versionsToDestroy(
     })
     .map((v) => v.name as string);
 }
+
+/**
+ * Destroy every version of `parent` that `justWritten` supersedes.
+ *
+ * One definition, shared by the rotation path and the OAuth connect path. Both used to
+ * carry their own copy of this loop, which is two chances to get a safety-critical and
+ * irreversible operation wrong — and it matters more here than anywhere: Xero's rotation
+ * is single-use, so the stored secret is the only copy of a live credential.
+ *
+ * The filter is a cost control, not the correctness boundary. This client auto-paginates
+ * every version on every call and DESTROYED rows never leave the listing (destroying wipes
+ * the payload, not the row), so an unfiltered list only ever grows. Filtering to
+ * NOT-destroyed rather than to state:ENABLED is deliberate — a version left DISABLED by
+ * the old disable-only cleanup is still billed, and excluding those is exactly what let
+ * three secrets here reach 194, 157 and 125 versions. versionsToDestroy() re-checks state
+ * regardless.
+ *
+ * Best effort throughout: a caller has already stored its token by this point and must not
+ * fail because the tidy-up did. Failures are logged rather than swallowed, because this is
+ * irreversible and otherwise entirely silent — a systematic failure (a missing
+ * secretmanager.versions.destroy permission, say) would reinstate the billing backlog with
+ * no other signal anywhere. The version resource name carries no credential material.
+ */
+export async function destroySupersededVersions(
+  // Structural, and deliberately loose: the real SecretManagerServiceClient resolves
+  // listSecretVersions to a 3-tuple (versions, next request, raw response) while the
+  // narrow SecretManagerClient interface resolves a 1-tuple. A variadic tail accepts both,
+  // so one helper serves the connect path's real client and the injected fake.
+  client: {
+    listSecretVersions: (req: { parent: string; filter?: string }) => Promise<
+      [Array<{ name?: string | null; state?: string | number | null }>, ...unknown[]]
+    >;
+    destroySecretVersion: (req: { name: string }) => Promise<unknown>;
+  },
+  parent: string,
+  justWritten: string | null,
+): Promise<void> {
+  if (!justWritten) return;
+  const [versions] = await client.listSecretVersions({
+    parent,
+    filter: "NOT state:DESTROYED",
+  });
+  for (const name of versionsToDestroy(versions, justWritten)) {
+    try {
+      await client.destroySecretVersion({ name });
+    } catch (e) {
+      // A peer may have destroyed it already, or a transient API error — don't let one
+      // failure skip cleanup of the remaining older versions.
+      console.error("[oauth] destroySupersededVersions: failed to destroy", name, e);
+    }
+  }
+}

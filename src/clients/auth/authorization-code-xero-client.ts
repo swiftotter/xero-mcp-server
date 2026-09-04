@@ -2,7 +2,10 @@ import { AxiosError } from "axios";
 
 import { ensureError } from "../../helpers/ensure-error.js";
 import { MCPXeroClient } from "./mcp-xero-client.js";
-import { newestEnabledVersion, versionsToDestroy } from "./token-recovery.js";
+import {
+  destroySupersededVersions,
+  newestEnabledVersion,
+} from "./token-recovery.js";
 
 const ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 60;
 
@@ -237,25 +240,7 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
   }
 
   private async destroyOldVersions(): Promise<void> {
-    if (!this.latestVersionName) return;
     const client = await this.getSecretClient();
-    // DESTROYED rows stay in the listing forever, so filter them out — otherwise the
-    // secrets that rotate most often re-scan the longest destroyed tail on every pass.
-    // Filtering to NOT-destroyed rather than to state:ENABLED is deliberate: a version
-    // left DISABLED by the old cleanup is still billed, and excluding those is exactly
-    // what let the backlog grow unbounded. versionsToDestroy() re-checks state anyway,
-    // so this is an optimisation, not the correctness boundary.
-    const [versions] = await client.listSecretVersions({
-      parent: this.secretName,
-      filter: "NOT state:DESTROYED",
-    });
-    for (const name of versionsToDestroy(versions, this.latestVersionName)) {
-      try {
-        await client.destroySecretVersion({ name });
-      } catch {
-        // A peer may have destroyed it already, or a transient API error — don't let one
-        // failure skip cleanup of the remaining older versions.
-      }
-    }
+    await destroySupersededVersions(client, this.secretName, this.latestVersionName);
   }
 }
