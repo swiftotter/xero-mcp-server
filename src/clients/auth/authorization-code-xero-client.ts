@@ -2,7 +2,10 @@ import { AxiosError } from "axios";
 
 import { ensureError } from "../../helpers/ensure-error.js";
 import { MCPXeroClient } from "./mcp-xero-client.js";
-import { newestEnabledVersion, versionsToDisable } from "./token-recovery.js";
+import {
+  destroySupersededVersions,
+  newestEnabledVersion,
+} from "./token-recovery.js";
 
 const ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 60;
 
@@ -34,7 +37,7 @@ type SecretManagerClient = {
   listSecretVersions: (req: { parent: string; filter?: string }) => Promise<
     [Array<{ name?: string | null; state?: string | number | null }>]
   >;
-  disableSecretVersion: (req: { name: string }) => Promise<unknown>;
+  destroySecretVersion: (req: { name: string }) => Promise<unknown>;
 };
 
 export class AuthorizationCodeXeroClient extends MCPXeroClient {
@@ -229,26 +232,26 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     });
     this.latestVersionName = created.name ?? null;
 
-    void this.disableOldVersions().catch(() => {
+    // Pass the version we just wrote rather than letting the cleanup re-read the field.
+    // The read would otherwise happen after `await getSecretClient()`, so its safety would
+    // rest on an argument about serialized refreshes and monotonic version numbers rather
+    // than on anything local — and here a wrong answer destroys the only copy of a live
+    // single-use credential, irreversibly.
+    void this.destroyOldVersions(created.name ?? null).catch((e) => {
       // Best effort, but NOT cosmetic: Xero's rotation is single-use, so the stored secret
-      // is the only copy of a live credential. Disabling the wrong version locks the user
-      // out entirely. See versionsToDisable().
+      // is the only copy of a live credential. Destroying the wrong version locks the user
+      // out entirely, and unlike disabling it cannot be undone. See versionsToDestroy().
+      // Logged, not swallowed: this only catches what escapes the per-version loop —
+      // above all a listSecretVersions failure, which is the one that silently stops
+      // ALL cleanup rather than one version's. That matters because the call now
+      // carries a `filter`; if the grammar were ever rejected, an empty handler here
+      // would hide it and the billing backlog would quietly return.
+      console.error("[oauth] destroyOldVersions: cleanup failed", e);
     });
   }
 
-  private async disableOldVersions(): Promise<void> {
-    if (!this.latestVersionName) return;
+  private async destroyOldVersions(justWritten: string | null): Promise<void> {
     const client = await this.getSecretClient();
-    const [versions] = await client.listSecretVersions({
-      parent: this.secretName,
-    });
-    for (const name of versionsToDisable(versions, this.latestVersionName)) {
-      try {
-        await client.disableSecretVersion({ name });
-      } catch {
-        // A peer may have disabled it already, or a transient API error — don't let one
-        // failure skip cleanup of the remaining older versions.
-      }
-    }
+    await destroySupersededVersions(client, this.secretName, justWritten);
   }
 }
