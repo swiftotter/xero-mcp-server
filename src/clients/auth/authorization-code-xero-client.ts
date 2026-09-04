@@ -232,7 +232,12 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     });
     this.latestVersionName = created.name ?? null;
 
-    void this.destroyOldVersions().catch((e) => {
+    // Pass the version we just wrote rather than letting the cleanup re-read the field.
+    // The read would otherwise happen after `await getSecretClient()`, so its safety would
+    // rest on an argument about serialized refreshes and monotonic version numbers rather
+    // than on anything local — and here a wrong answer destroys the only copy of a live
+    // single-use credential, irreversibly.
+    void this.destroyOldVersions(created.name ?? null).catch((e) => {
       // Best effort, but NOT cosmetic: Xero's rotation is single-use, so the stored secret
       // is the only copy of a live credential. Destroying the wrong version locks the user
       // out entirely, and unlike disabling it cannot be undone. See versionsToDestroy().
@@ -245,8 +250,8 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     });
   }
 
-  private async destroyOldVersions(): Promise<void> {
+  private async destroyOldVersions(justWritten: string | null): Promise<void> {
     const client = await this.getSecretClient();
-    await destroySupersededVersions(client, this.secretName, this.latestVersionName);
+    await destroySupersededVersions(client, this.secretName, justWritten);
   }
 }

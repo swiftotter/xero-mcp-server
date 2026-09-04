@@ -21,6 +21,7 @@ import {
   shouldRetryAfterReauth,
   statusOf,
   versionsToDestroy,
+  destroySupersededVersions,
 } from "../dist/clients/auth/token-recovery.js";
 
 const checks = [];
@@ -92,6 +93,102 @@ eq(
   versionsToDestroy([V(1, "DESTROYED"), V(2)], vname(2)),
   [],
 );
+
+// ------------------------------------------- the shared cleanup helper (I/O path)
+//
+// versionsToDestroy is the pure decision; this is the loop that acts on it, and it is
+// shared by the rotation path and the OAuth connect path. The predicate being right does
+// not help if the loop aborts on the first error, forgets the filter, or goes quiet.
+
+/** Minimal Secret Manager double: records what was asked of it, fails whom it is told to. */
+function fakeSecretClient({ versions, failOn = [], listThrows = false }) {
+  const seen = { listCalls: 0, filters: [], destroyed: [], attempted: [] };
+  return {
+    seen,
+    async listSecretVersions(req) {
+      seen.listCalls += 1;
+      seen.filters.push(req.filter);
+      if (listThrows) throw new Error("list boom");
+      return [versions];
+    },
+    async destroySecretVersion(req) {
+      seen.attempted.push(req.name);
+      if (failOn.includes(req.name)) throw new Error("boom");
+      seen.destroyed.push(req.name);
+      return {};
+    },
+  };
+}
+
+/** Run fn with console.error captured, so logging can be asserted rather than assumed. */
+async function withCapturedErrors(fn) {
+  const original = console.error;
+  const lines = [];
+  console.error = (...args) => lines.push(args.map(String).join(" "));
+  try {
+    await fn();
+  } finally {
+    console.error = original;
+  }
+  return lines;
+}
+
+{
+  // One version failing must not abort cleanup of the rest. Aborting is how a backlog
+  // rebuilds: one stuck version would strand every older one behind it forever.
+  const client = fakeSecretClient({
+    versions: [V(1), V(2), V(3), V(4)],
+    failOn: [vname(2)],
+  });
+  const logged = await withCapturedErrors(() =>
+    destroySupersededVersions(client, "projects/p/secrets/s", vname(4)),
+  );
+  eq(
+    "a failing destroy does not stop the others",
+    client.seen.destroyed,
+    [vname(1), vname(3)],
+  );
+  eq(
+    "every superseded version was still attempted",
+    client.seen.attempted,
+    [vname(1), vname(2), vname(3)],
+  );
+  ok(
+    "the failure is logged, not swallowed",
+    logged.some((l) => l.includes("failed to destroy") && l.includes(vname(2))),
+  );
+  eq("the newest version is never touched", client.seen.destroyed.includes(vname(4)), false);
+}
+
+{
+  // The filter is what keeps the listing bounded once DESTROYED rows accumulate.
+  const client = fakeSecretClient({ versions: [V(1), V(2)] });
+  await destroySupersededVersions(client, "projects/p/secrets/s", vname(2));
+  eq("the listing skips the destroyed tail", client.seen.filters, ["NOT state:DESTROYED"]);
+}
+
+{
+  // No version written means nothing to supersede — it must not even ask.
+  const client = fakeSecretClient({ versions: [V(1)] });
+  await destroySupersededVersions(client, "projects/p/secrets/s", null);
+  eq("a null justWritten short-circuits before any I/O", client.seen.listCalls, 0);
+  eq("and destroys nothing", client.seen.destroyed, []);
+}
+
+{
+  // The failure that stops ALL cleanup rather than one version's. It throws before the
+  // per-version try/catch, so only the caller's outer handler can see it — and that
+  // handler was an empty catch until review caught it twice. Both call sites now log it;
+  // this pins that it actually reaches them rather than dying in here.
+  const client = fakeSecretClient({ versions: [V(1)], listThrows: true });
+  let threw;
+  try {
+    await destroySupersededVersions(client, "projects/p/secrets/s", vname(2));
+  } catch (e) {
+    threw = e;
+  }
+  eq("a LIST failure propagates to the caller's handler", threw?.message, "list boom");
+}
 
 // ------------------------------------------------- the reauth-retry Proxy
 /** Minimal client: counts authenticate/invalidate and hands out a fresh token each time. */
