@@ -2,7 +2,7 @@ import { AxiosError } from "axios";
 
 import { ensureError } from "../../helpers/ensure-error.js";
 import { MCPXeroClient } from "./mcp-xero-client.js";
-import { newestEnabledVersion, versionsToDisable } from "./token-recovery.js";
+import { newestEnabledVersion, versionsToDestroy } from "./token-recovery.js";
 
 const ACCESS_TOKEN_REFRESH_BUFFER_SECONDS = 60;
 
@@ -34,7 +34,7 @@ type SecretManagerClient = {
   listSecretVersions: (req: { parent: string; filter?: string }) => Promise<
     [Array<{ name?: string | null; state?: string | number | null }>]
   >;
-  disableSecretVersion: (req: { name: string }) => Promise<unknown>;
+  destroySecretVersion: (req: { name: string }) => Promise<unknown>;
 };
 
 export class AuthorizationCodeXeroClient extends MCPXeroClient {
@@ -229,24 +229,24 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     });
     this.latestVersionName = created.name ?? null;
 
-    void this.disableOldVersions().catch(() => {
+    void this.destroyOldVersions().catch(() => {
       // Best effort, but NOT cosmetic: Xero's rotation is single-use, so the stored secret
-      // is the only copy of a live credential. Disabling the wrong version locks the user
-      // out entirely. See versionsToDisable().
+      // is the only copy of a live credential. Destroying the wrong version locks the user
+      // out entirely, and unlike disabling it cannot be undone. See versionsToDestroy().
     });
   }
 
-  private async disableOldVersions(): Promise<void> {
+  private async destroyOldVersions(): Promise<void> {
     if (!this.latestVersionName) return;
     const client = await this.getSecretClient();
     const [versions] = await client.listSecretVersions({
       parent: this.secretName,
     });
-    for (const name of versionsToDisable(versions, this.latestVersionName)) {
+    for (const name of versionsToDestroy(versions, this.latestVersionName)) {
       try {
-        await client.disableSecretVersion({ name });
+        await client.destroySecretVersion({ name });
       } catch {
-        // A peer may have disabled it already, or a transient API error — don't let one
+        // A peer may have destroyed it already, or a transient API error — don't let one
         // failure skip cleanup of the remaining older versions.
       }
     }

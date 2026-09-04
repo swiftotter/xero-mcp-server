@@ -20,7 +20,7 @@ import {
   parseVersionNumber,
   shouldRetryAfterReauth,
   statusOf,
-  versionsToDisable,
+  versionsToDestroy,
 } from "../dist/clients/auth/token-recovery.js";
 
 const checks = [];
@@ -67,17 +67,31 @@ eq(
 );
 eq("newestEnabledVersion returns null when none are enabled", newestEnabledVersion([V(1, "DISABLED")]), null);
 
-eq("versionsToDisable takes strictly older only", versionsToDisable([V(1), V(2), V(3)], vname(3)), [
+eq("versionsToDestroy takes strictly older only", versionsToDestroy([V(1), V(2), V(3)], vname(3)), [
   vname(1),
   vname(2),
 ]);
 eq(
-  "THE BRICK GUARD: a version newer than ours is never disabled",
-  versionsToDisable([V(1), V(2), V(3)], vname(2)),
+  "THE BRICK GUARD: a version newer than ours is never destroyed",
+  versionsToDestroy([V(1), V(2), V(3)], vname(2)),
   [vname(1)],
 );
-eq("versionsToDisable never takes our own", versionsToDisable([V(5)], vname(5)), []);
-eq("versionsToDisable does nothing when it cannot order", versionsToDisable([V(1), V(2)], null), []);
+eq("versionsToDestroy never takes our own", versionsToDestroy([V(5)], vname(5)), []);
+eq("versionsToDestroy does nothing when it cannot order", versionsToDestroy([V(1), V(2)], null), []);
+
+// Secret Manager bills DISABLED versions exactly like ENABLED ones, so cleanup that
+// skipped them could never retire what the old disable-only code left behind. Three
+// secrets here had reached 194, 157 and 125 disabled versions before this was fixed.
+eq(
+  "THE BILLING GUARD: an already-DISABLED older version is still destroyed",
+  versionsToDestroy([V(1, "DISABLED"), V(2)], vname(2)),
+  [vname(1)],
+);
+eq(
+  "a DESTROYED version is never destroyed twice",
+  versionsToDestroy([V(1, "DESTROYED"), V(2)], vname(2)),
+  [],
+);
 
 // ------------------------------------------------- the reauth-retry Proxy
 /** Minimal client: counts authenticate/invalidate and hands out a fresh token each time. */

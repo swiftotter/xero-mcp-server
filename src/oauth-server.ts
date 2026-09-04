@@ -22,6 +22,7 @@ import {
 } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { versionsToDestroy } from "./clients/auth/token-recovery.js";
 import {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -465,10 +466,36 @@ export class XeroChainedOAuthProvider implements OAuthServerProvider {
         throw e;
       }
     }
-    await this.config.secretManager.addSecretVersion({
+    const [created] = await this.config.secretManager.addSecretVersion({
       parent: secretName,
       payload: { data: Buffer.from(refreshToken, "utf8") },
     });
+
+    // Retire the versions this connect just superseded. Every reconnect lands a new
+    // version here and this path had no cleanup at all, so each one was a permanent
+    // monthly charge. Best effort and not awaited into the failure path: a connect that
+    // already stored its token must report success even if cleanup fails.
+    void this.destroySupersededVersions(secretName, created.name ?? null).catch(
+      () => {},
+    );
+  }
+
+  private async destroySupersededVersions(
+    secretName: string,
+    justWritten: string | null,
+  ): Promise<void> {
+    if (!justWritten) return;
+    const [versions] = await this.config.secretManager.listSecretVersions({
+      parent: secretName,
+    });
+    for (const name of versionsToDestroy(versions, justWritten)) {
+      try {
+        await this.config.secretManager.destroySecretVersion({ name });
+      } catch {
+        // A peer may have destroyed it already, or a transient API error — don't let
+        // one failure skip cleanup of the remaining older versions.
+      }
+    }
   }
 
   private issueTokens(
