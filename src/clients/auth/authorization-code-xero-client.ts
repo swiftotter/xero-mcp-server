@@ -232,10 +232,16 @@ export class AuthorizationCodeXeroClient extends MCPXeroClient {
     });
     this.latestVersionName = created.name ?? null;
 
-    void this.destroyOldVersions().catch(() => {
+    void this.destroyOldVersions().catch((e) => {
       // Best effort, but NOT cosmetic: Xero's rotation is single-use, so the stored secret
       // is the only copy of a live credential. Destroying the wrong version locks the user
       // out entirely, and unlike disabling it cannot be undone. See versionsToDestroy().
+      // Logged, not swallowed: this only catches what escapes the per-version loop —
+      // above all a listSecretVersions failure, which is the one that silently stops
+      // ALL cleanup rather than one version's. That matters because the call now
+      // carries a `filter`; if the grammar were ever rejected, an empty handler here
+      // would hide it and the billing backlog would quietly return.
+      console.error("[oauth] destroyOldVersions: cleanup failed", e);
     });
   }
 

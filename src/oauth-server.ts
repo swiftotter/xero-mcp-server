@@ -479,9 +479,10 @@ export class XeroChainedOAuthProvider implements OAuthServerProvider {
       this.config.secretManager,
       secretName,
       created.name ?? null,
-    ).catch(() => {});
+    ).catch((e) =>
+      console.error("[oauth] persistXeroRefreshToken: cleanup failed", e),
+    );
   }
-
 
   private issueTokens(
     clientId: string,
