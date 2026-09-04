@@ -485,8 +485,15 @@ export class XeroChainedOAuthProvider implements OAuthServerProvider {
     justWritten: string | null,
   ): Promise<void> {
     if (!justWritten) return;
+    // DESTROYED rows stay in the listing forever, so filter them out — otherwise the
+    // secrets that rotate most often re-scan the longest destroyed tail on every pass.
+    // Filtering to NOT-destroyed rather than to state:ENABLED is deliberate: a version
+    // left DISABLED by the old cleanup is still billed, and excluding those is exactly
+    // what let the backlog grow unbounded. versionsToDestroy() re-checks state anyway,
+    // so this is an optimisation, not the correctness boundary.
     const [versions] = await this.config.secretManager.listSecretVersions({
       parent: secretName,
+      filter: "NOT state:DESTROYED",
     });
     for (const name of versionsToDestroy(versions, justWritten)) {
       try {
