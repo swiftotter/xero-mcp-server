@@ -13,6 +13,7 @@
 import { HistoryRecords } from "xero-node";
 
 import { xeroClient } from "../clients/xero-client.js";
+import { ensureError } from "./ensure-error.js";
 
 export type AuditableResource =
   | "Invoice"
@@ -101,7 +102,7 @@ export async function postAuditNote(
         return;
     }
   } catch (err) {
-    const msg = (err as Error).message ?? String(err);
+    const msg = ensureError(err).message;
     console.error(
       `[audit] failed to post ${action} note on ${resourceType} ${resourceId}: ${msg}`,
     );

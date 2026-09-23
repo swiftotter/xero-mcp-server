@@ -36,7 +36,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "openid-client": "^6.8.1",
-    "xero-node": "^13.3.0",
+    "xero-node": "^13.5.0",
     "zod": "3.25"
   },
   "devDependencies": {
@@ -58,7 +58,7 @@
     "protobufjs": "^7.6.4",
     "form-data": "^4.0.6",
     "brace-expansion": "^2.1.4",
-    "fast-uri": "^3.1.5",
+    "fast-uri": "^3.1.8",
     "ip-address": "^10.3.1"
   },
   "//overrides": [
@@ -79,8 +79,8 @@
     "is built against it. That pairing does not transfer here.)",
     "",
     "fast-uri: @modelcontextprotocol/sdk -> ajv, which declares ^3.0.1. Host-confusion",
-    "advisories cover 3.0.0 - 3.1.4, so the floor is 3.1.5. NOT 4.x \u2014 published, but ajv",
-    "would not accept a major.",
+    "and SSRF advisories cover 3.0.0 - 3.1.5 (the last set Sept 2026), so the floor is 3.1.8.",
+    "NOT 4.x \u2014 published, but ajv would not accept a major.",
     "",
     "ip-address: @modelcontextprotocol/sdk -> express-rate-limit, which declares ^10.2.0.",
     "SSRF / trust-boundary advisories cover <=10.3.0, so the floor is 10.3.1.",
