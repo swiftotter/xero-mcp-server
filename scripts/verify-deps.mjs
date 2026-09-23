@@ -12,6 +12,11 @@
  * We also force axios, which xero-node uses for every API call and which
  * src/clients/xero-client.ts imports directly.
  *
+ * And xero-node itself must be a build that keeps credentials out of its errors (>= 13.5.0):
+ * older ones put the bearer token, client secret and refresh token in the value every failed
+ * call rejects with. Checked by behaviour against the installed ApiError, plus our own
+ * formatError/ensureError against an unredacted blob — so this one needs `npm run build`.
+ *
  * The specific hazard, which has bitten the sibling repos twice: brace-expansion 5.x
  * exports `{ expand }` with NO `default`, while minimatch@9's compiled output calls
  * `brace_expansion_1.default()`. Pinning 5.x therefore makes `npm audit` report zero
@@ -204,6 +209,116 @@ check("xero-node still loads and builds its API clients (axios is its transport)
   assert.equal(typeof client.setTokenSet, "function");
 });
 
+// xero-node 4.0.0 through 19.3.0 (13.4.0 on our line) copied request headers into the error
+// every failed call rejects with: `Authorization: Bearer <access token>` on API calls, and on
+// the token endpoint the Basic client-secret header plus the refresh-token body. Xero's
+// security notice of September 2026; fixed in 13.5.0. These assert the BEHAVIOUR, not a
+// version string, so a lockfile slip or a downgrade back to a leaking build fails here.
+// Everything credential-shaped below carries SECRET, so one substring test covers it.
+const LEAK = "SECRET";
+const BEARER = `Bearer verify-access-token-${LEAK}`;
+const BASIC = `Basic verify-client-secret-${LEAK}`;
+const REFRESH = `verify-refresh-token-${LEAK}`;
+
+function fakeAxiosError() {
+  return {
+    message: "Request failed with status code 400",
+    response: {
+      status: 400,
+      headers: { "content-type": "application/json" },
+      data: {
+        Message: "A validation exception occurred",
+        Elements: [{ ValidationErrors: [{ Message: "Contact is required" }] }],
+      },
+    },
+    request: {
+      protocol: "https:",
+      host: "api.xero.com",
+      path: "/api.xro/2.0/Invoices",
+      method: "PUT",
+      getHeaders: () => ({
+        authorization: BEARER,
+        "xero-tenant-id": "verify-tenant",
+        "content-type": "application/json",
+      }),
+    },
+    config: {
+      headers: { Authorization: BASIC },
+      data: `grant_type=refresh_token&refresh_token=${REFRESH}`,
+      auth: { username: "verify-client-id", password: `client-${LEAK}` },
+    },
+  };
+}
+
+check("xero-node's ApiError keeps request credentials out (the generated-method reject)", () => {
+  const { ApiError } = require("xero-node/dist/model/ApiError");
+  // Exactly what every generated method rejects with.
+  const blob = JSON.stringify(new ApiError(fakeAxiosError()).generateError());
+  assert.ok(!blob.includes(LEAK), "ApiError serialized a credential header");
+  // Not vacuous: headers ARE still serialized, just the allowlisted ones.
+  assert.ok(blob.includes("verify-tenant"), "expected allowlisted headers to survive");
+});
+
+check("xero-node redacts the token-endpoint reject (client secret, refresh token)", () => {
+  const { redactError } = require("xero-node/dist/model/ApiError");
+  assert.equal(typeof redactError, "function", "redactError missing: xero-node predates 13.5.0");
+  const redacted = redactError(fakeAxiosError());
+  assert.ok(!JSON.stringify(redacted).includes(LEAK), "redactError left a credential");
+});
+
+// Second wall, ours: whatever reaches a tool result or a log line goes through
+// src/helpers/xero-api-error.ts and never re-serializes the error. Fed an UNREDACTED blob —
+// the pre-13.5.0 shape — so this holds even if the library regresses.
+const dist = async (path) => {
+  try {
+    return await import(new URL(`../dist/helpers/${path}`, import.meta.url));
+  } catch (e) {
+    return { loadError: `${e.message} (run \`npm run build\` first)` };
+  }
+};
+const formatErrorModule = await dist("format-error.js");
+const ensureErrorModule = await dist("ensure-error.js");
+
+function leakyBlob(statusCode, body) {
+  return JSON.stringify({
+    response: {
+      statusCode,
+      body,
+      headers: {},
+      request: { url: { path: "/api.xro/2.0/Invoices" }, headers: { authorization: BEARER } },
+    },
+    body,
+  });
+}
+
+check("formatError/ensureError never echo a xero-node reject's request headers", () => {
+  for (const m of [formatErrorModule, ensureErrorModule]) assert.ok(!m.loadError, m.loadError);
+  const { formatError } = formatErrorModule;
+  const { ensureError } = ensureErrorModule;
+  const body = fakeAxiosError().response.data;
+
+  for (const out of [formatError(leakyBlob(400, body)), ensureError(leakyBlob(400, body)).message]) {
+    assert.ok(!out.includes(LEAK), `credential in: ${out}`);
+    assert.ok(!/request|authorization/i.test(out), `raw error echoed: ${out}`);
+    assert.ok(out.includes("Contact is required"), `Xero's message was dropped: ${out}`);
+  }
+
+  // Status mapping still applies to the string shape, not only to AxiosError.
+  assert.equal(
+    formatError(leakyBlob(401, { Message: "x" })),
+    "Authentication failed. Please check your Xero credentials.",
+  );
+
+  // The token endpoint's `{ response, body }` reject: `invalid_grant` must survive, because
+  // authorization-code-xero-client.ts matches on it to decide whether to re-read the secret.
+  const tokenReject = {
+    response: { status: 400, config: { headers: { Authorization: BASIC } } },
+    body: { error: "invalid_grant" },
+  };
+  const msg = ensureError(tokenReject).message;
+  assert.ok(msg.includes("invalid_grant") && !msg.includes(LEAK), msg);
+});
+
 check("Secret Manager client still constructs (production auth path)", () => {
   const { SecretManagerServiceClient } = require("@google-cloud/secret-manager");
   // No network and no ADC needed to construct; this exercises the whole
@@ -218,7 +333,8 @@ if (fail.length > 0) {
   console.error(`\ndependency smoke: ${fail.length} FAILED, ${checks.length} passed\n`);
   for (const f of fail) console.error(`  FAIL  ${f}`);
   console.error(
-    "\nAn override in package.json is likely incompatible. See the //overrides note there.",
+    "\nAn override in package.json is likely incompatible (see the //overrides note there), or" +
+      " xero-node is back on a build that leaks credentials into its errors (needs >= 13.5.0).",
   );
   process.exit(1);
 }
