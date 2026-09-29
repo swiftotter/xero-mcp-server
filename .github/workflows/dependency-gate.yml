@@ -1,0 +1,46 @@
+# Dependency gate — installed by swiftotter/vulnerability-manager. Do not edit here: the merger refuses to
+# merge anything while this file differs from templates/target-repo/.github/workflows/dependency-gate.yml
+# in that repo. Change it there, then copy it to every repo.
+#
+# It runs the PR's code (install, build, tests), so it has a read-only token and no secrets, and it never
+# merges. The tamper check and the merge happen centrally in swiftotter/vulnerability-manager, which only
+# trusts this workflow's "gate" job result on the PR's exact head commit.
+name: Dependency gate
+
+on:
+  pull_request:
+
+permissions: {}
+
+jobs:
+  gate:
+    if: github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Use the Node.js version production uses
+        id: node
+        run: |
+          v=$(sed -nE 's/^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?node:([0-9]+).*/\2/p' Dockerfile 2>/dev/null | tail -1)
+          echo "version=${v:-22}" >> "$GITHUB_OUTPUT"
+          echo "Node.js ${v:-22}"
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.node.outputs.version }}
+      - name: Refuse to pass untested code
+        run: |
+          if ! node -e "process.exit(require('./package.json').scripts?.test ? 0 : 1)"; then
+            echo "::error::No test script, so nothing proves this update works. Add one before auto-merge."
+            exit 1
+          fi
+      - name: Install without running install scripts
+        run: npm ci --ignore-scripts
+      - name: Build
+        run: npm run build --if-present
+      - name: Test
+        run: npm test
