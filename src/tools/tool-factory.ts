@@ -13,11 +13,22 @@ import {
   type WriteAction,
 } from "../helpers/require-write-confirmation.js";
 import { coerceJsonishShape } from "../helpers/coerce-jsonish-args.js";
+import { requireClaudeAccount } from "../helpers/claude-account-gate.js";
 
 function inferUpdateAction(name: string): WriteAction {
   if (name.startsWith("approve-")) return "approve";
   if (name.startsWith("revert-")) return "revert";
   return "update";
+}
+
+// Every write goes through both gates. The account gate wraps OUTSIDE the
+// confirmation gate so someone on a regular (non-Claude) Xero login is told at
+// the preview step, before they approve anything, rather than after.
+function gateWrite(
+  action: WriteAction,
+  tool: ToolDefinition<ZodRawShapeCompat>,
+): ToolDefinition<ZodRawShapeCompat> {
+  return requireClaudeAccount(requireWriteConfirmation(action, tool));
 }
 
 // Register via the SDK's explicit `registerTool({ inputSchema })` API rather
@@ -83,7 +94,7 @@ const DELETE_ANNOTATIONS: ToolAnnotations = {
 export function ToolFactory(server: McpServer) {
 
   DeleteTools.map((tool) => tool())
-    .map((tool) => requireWriteConfirmation("delete", tool))
+    .map((tool) => gateWrite("delete", tool))
     .forEach((tool) => register(server, tool, DELETE_ANNOTATIONS));
   GetTools.map((tool) => tool())
     .forEach((tool) => {
@@ -93,17 +104,17 @@ export function ToolFactory(server: McpServer) {
       // files on the host. (In the hosted deployment the handler refuses the
       // write outright.) Every other Get tool is genuinely read-only.
       if (tool.name === "get-attachment") {
-        register(server, requireWriteConfirmation("create", tool), CREATE_ANNOTATIONS);
+        register(server, gateWrite("create", tool), CREATE_ANNOTATIONS);
         return;
       }
       register(server, tool, READ_ONLY_ANNOTATIONS);
     });
   CreateTools.map((tool) => tool())
-    .map((tool) => requireWriteConfirmation("create", tool))
+    .map((tool) => gateWrite("create", tool))
     .forEach((tool) => register(server, tool, CREATE_ANNOTATIONS));
   ListTools.map((tool) => tool())
     .forEach((tool) => register(server, tool, READ_ONLY_ANNOTATIONS));
   UpdateTools.map((tool) => tool())
-    .map((tool) => requireWriteConfirmation(inferUpdateAction(tool.name), tool))
+    .map((tool) => gateWrite(inferUpdateAction(tool.name), tool))
     .forEach((tool) => register(server, tool, UPDATE_ANNOTATIONS));
 }

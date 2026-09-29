@@ -26,7 +26,8 @@
     "verify:schemas": "node scripts/verify-tool-schemas.mjs",
     "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs",
     "verify:account-names": "node scripts/verify-account-names.mjs",
-    "verify:auth-recovery": "node scripts/verify-auth-recovery.mjs"
+    "verify:auth-recovery": "node scripts/verify-auth-recovery.mjs",
+    "verify:claude-account": "node scripts/verify-claude-account.mjs"
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",
