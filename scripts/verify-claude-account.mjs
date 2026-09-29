@@ -43,6 +43,7 @@ process.env.XERO_APP_CLIENT_ID ||= "verify-client-id";
 process.env.XERO_APP_CLIENT_SECRET ||= "verify-client-secret";
 process.env.XERO_REFRESH_TOKEN_SECRET_NAME ||=
   "projects/verify/secrets/xero-refresh-token-verify";
+process.env.XERO_USER_NAME ||= "Sarah Verify";
 
 const { isClaudeAccountEmail, createClaudeAccountGate, requireClaudeAccount } =
   await import(resolve(ROOT, "dist", "helpers", "claude-account-gate.js"));
@@ -117,8 +118,18 @@ try {
       textOf(confirmed),
     );
     assert(
-      logged.some((line) => line.includes("sarah@swiftotter.com")),
-      "block is logged with the signed-in email",
+      logged.some((line) => line.includes("xero_userid=verify")),
+      "block is logged with the Xero user id",
+      logged.join("\n"),
+    );
+    assert(
+      !logged.some(
+        (line) =>
+          line.includes("sarah@swiftotter.com") ||
+          line.includes(process.env.XERO_USER_NAME),
+      ),
+      "block log carries no email or name (no PII in logs)",
+      logged.join("\n"),
     );
   }
 

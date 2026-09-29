@@ -30,6 +30,19 @@ const XERO_USERINFO_URL = "https://identity.xero.com/connect/userinfo";
 /** Resolves the connected Xero user's email; rejects if it cannot be read. */
 export type XeroEmailLoader = () => Promise<string>;
 
+const USERINFO_TIMEOUT_MS = 10_000;
+
+async function fetchUserinfo(): Promise<Response> {
+  await xeroClient.authenticate();
+  const accessToken = xeroClient.readTokenSet()?.access_token;
+  if (!accessToken) throw new Error("no Xero access token available");
+  return fetch(XERO_USERINFO_URL, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    // A hung identity endpoint must not hang every write.
+    signal: AbortSignal.timeout(USERINFO_TIMEOUT_MS),
+  });
+}
+
 /**
  * Ask Xero who this connection belongs to, using the access token the child
  * already holds. The email is read here, in the child, rather than carried in
@@ -38,25 +51,36 @@ export type XeroEmailLoader = () => Promise<string>;
  * very case this gate exists for.
  */
 const loadXeroEmail: XeroEmailLoader = async () => {
-  await xeroClient.authenticate();
-  const accessToken = xeroClient.readTokenSet()?.access_token;
-  if (!accessToken) throw new Error("no Xero access token available");
-
-  const response = await fetch(XERO_USERINFO_URL, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  let response = await fetchUserinfo();
+  // Same rule as the reauth Proxy in mcp-xero-client.ts: a 401 gets one fresh
+  // token and one retry.
+  if (response.status === 401) {
+    xeroClient.invalidateAccessToken();
+    response = await fetchUserinfo();
+  }
   // Status only: never echo a response body or the request back out.
   if (!response.ok) {
     throw new Error(`Xero userinfo returned ${response.status}`);
   }
   const userinfo = (await response.json()) as {
     email?: string;
-    preferred_username?: string;
+    email_verified?: boolean | string;
   };
-  const email = userinfo.email ?? userinfo.preferred_username;
-  if (!email) throw new Error("Xero userinfo returned no email");
-  return email;
+  // `email` only: `preferred_username` is a login handle, not an address we
+  // should domain-match on.
+  if (!userinfo.email) throw new Error("Xero userinfo returned no email");
+  if (userinfo.email_verified === false || userinfo.email_verified === "false") {
+    throw new Error("the Xero login's email is not verified");
+  }
+  return userinfo.email;
 };
+
+function xeroUserId(): string {
+  const secretName = process.env.XERO_REFRESH_TOKEN_SECRET_NAME ?? "";
+  const marker = "xero-refresh-token-";
+  const at = secretName.lastIndexOf(marker);
+  return at >= 0 ? secretName.slice(at + marker.length) : "unknown";
+}
 
 export interface ClaudeAccountGate {
   wrap(tool: ToolDefinition<ZodRawShapeCompat>): ToolDefinition<ZodRawShapeCompat>;
@@ -96,8 +120,10 @@ export function createClaudeAccountGate(options: {
   };
 
   const blocked = (toolName: string, logDetail: string, message: string[]) => {
+    // Log the Xero user id, never a name or email (no PII in logs). The id is
+    // the suffix of this child's secret, so it maps to one connected user.
     console.error(
-      `[claude-account-gate] blocked ${toolName} for ${process.env.XERO_USER_NAME ?? "unknown user"}: ${logDetail}`,
+      `[claude-account-gate] blocked ${toolName} for xero_userid=${xeroUserId()}: ${logDetail}`,
     );
     return {
       isError: true,
@@ -127,7 +153,7 @@ export function createClaudeAccountGate(options: {
         }
 
         if (!isClaudeAccountEmail(connectedEmail)) {
-          return blocked(tool.name, `signed in as ${connectedEmail}`, [
+          return blocked(tool.name, "not a Claude account", [
             `This Xero connection is signed in as ${connectedEmail}, which is not a dedicated Claude account. Writes through this connector require a Xero login used only for Claude — a swiftotter.com address with "claude" in it, such as name+claude@swiftotter.com. Reads still work.`,
             ``,
             `To fix: sign out of Xero in your browser, then disconnect and reconnect the Xero connector in Claude and sign in with your Claude Xero account. Tell the user this; do not retry the write.`,
