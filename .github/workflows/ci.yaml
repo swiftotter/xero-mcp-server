@@ -98,6 +98,12 @@ jobs:
       - name: Verify GL accounts render by name
         run: npm run verify:account-names
 
+      # Writes are refused unless the connected Xero user is a dedicated Claude
+      # account. Dropping the wrapper from a write path fails nothing else —
+      # writes just succeed from anyone's everyday login — so guard it here.
+      - name: Verify Claude-account write gate
+        run: npm run verify:claude-account
+
   docker-build:
     name: Docker build
     runs-on: ubuntu-latest

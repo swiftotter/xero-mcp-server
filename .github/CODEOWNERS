@@ -1,0 +1,3 @@
+# Added by swiftotter/vulnerability-manager. Changes to workflows and the dependency gate need the
+# security team's review. Merge this into the repo's existing CODEOWNERS if it has one.
+/.github/ @swiftotter/security

@@ -19,6 +19,7 @@
  * session with no authenticated user name) means the edit stays blocked.
  */
 import { xeroClient } from "../clients/xero-client.js";
+import { ensureError } from "./ensure-error.js";
 import {
   auditNoteDetails,
   hasAuthenticatedUserName,
@@ -62,7 +63,7 @@ export async function wasRecentlyCreatedByCurrentUser(
         (record.details?.startsWith(`${base} (`) ?? false),
     );
   } catch (err) {
-    const msg = (err as Error).message ?? String(err);
+    const msg = ensureError(err).message;
     console.error(
       `[audit] failed to check creation history on ${resourceType} ${resourceId}: ${msg}`,
     );

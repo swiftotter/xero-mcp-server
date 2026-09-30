@@ -20,13 +20,15 @@
     "watch": "tsc --watch",
     "lint:fix": "eslint --fix",
     "lint": "eslint .",
+    "test": "npm run lint && npm run verify:deps && npm run verify:fs-guard && npm run verify:stateless && npm run verify:schemas && npm run verify:confirmation-gate && npm run verify:account-names && npm run verify:auth-recovery && npm run verify:claude-account",
     "verify:deps": "node scripts/verify-deps.mjs",
     "verify:fs-guard": "node scripts/verify-attachment-fs-guard.mjs",
     "verify:stateless": "node scripts/verify-stateless-mcp.mjs",
     "verify:schemas": "node scripts/verify-tool-schemas.mjs",
     "verify:confirmation-gate": "node scripts/verify-confirmation-gate.mjs",
     "verify:account-names": "node scripts/verify-account-names.mjs",
-    "verify:auth-recovery": "node scripts/verify-auth-recovery.mjs"
+    "verify:auth-recovery": "node scripts/verify-auth-recovery.mjs",
+    "verify:claude-account": "node scripts/verify-claude-account.mjs"
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",
@@ -36,7 +38,7 @@
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
     "openid-client": "^6.8.1",
-    "xero-node": "^13.3.0",
+    "xero-node": "^13.5.0",
     "zod": "3.25"
   },
   "devDependencies": {
@@ -55,10 +57,10 @@
   },
   "overrides": {
     "hono": "^4.12.25",
-    "protobufjs": "^7.6.4",
+    "protobufjs": "^7.6.6",
     "form-data": "^4.0.6",
-    "brace-expansion": "^2.1.4",
-    "fast-uri": "^3.1.5",
+    "brace-expansion": "^2.1.7",
+    "fast-uri": "^3.1.8",
     "ip-address": "^10.3.1"
   },
   "//overrides": [
@@ -79,8 +81,8 @@
     "is built against it. That pairing does not transfer here.)",
     "",
     "fast-uri: @modelcontextprotocol/sdk -> ajv, which declares ^3.0.1. Host-confusion",
-    "advisories cover 3.0.0 - 3.1.4, so the floor is 3.1.5. NOT 4.x \u2014 published, but ajv",
-    "would not accept a major.",
+    "and SSRF advisories cover 3.0.0 - 3.1.5 (the last set Sept 2026), so the floor is 3.1.8.",
+    "NOT 4.x \u2014 published, but ajv would not accept a major.",
     "",
     "ip-address: @modelcontextprotocol/sdk -> express-rate-limit, which declares ^10.2.0.",
     "SSRF / trust-boundary advisories cover <=10.3.0, so the floor is 10.3.1.",
