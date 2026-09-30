@@ -151,6 +151,13 @@ jobs:
     timeout-minutes: 10
     environment: production
     steps:
+      # Only for scripts/smoke.mjs below. First, so its workspace clean can't touch the GCP credentials file
+      # the auth step writes.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
@@ -210,6 +217,14 @@ jobs:
             echo "::error::/status health check failed"
             exit 1
           fi
+
+      # /status only proves the server is up. The smoke test proves it works: OAuth discovery is published and
+      # unauthenticated or forged requests are refused. No credentials needed; it never writes.
+      - name: Smoke test production
+        run: |
+          SMOKE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+            --project="${GCP_PROJECT}" --region="${GCP_REGION}" --format="value(status.url)")
+          SMOKE_URL="${SMOKE_URL}" node scripts/smoke.mjs
 
       - name: Rollout summary
         if: always()

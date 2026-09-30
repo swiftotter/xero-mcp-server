@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Xero MCP server (TypeScript). Build locally with `npm run build` (`src/` → `dist/`); lint with `npm run lint`. There is no test framework — verification is a set of `npm run verify:*` scripts under `scripts/` (`fs-guard`, `stateless`, `schemas`, `confirmation-gate`, `auth-recovery`). Add to one of those when you add an invariant.
+Xero MCP server (TypeScript). Build locally with `npm run build` (`src/` → `dist/`); lint with `npm run lint`. There is no test framework — verification is a set of `npm run verify:*` scripts under `scripts/` (`fs-guard`, `stateless`, `schemas`, `confirmation-gate`, `auth-recovery`), which `npm test` runs with lint. Add to one of those when you add an invariant. `npm run smoke` (after a build) boots the **real** entrypoint and child with fake settings and no credentials and drives it as a fake user; `SMOKE_URL=… npm run smoke` checks a deployed server, which Deploy does after every rollout. Keep it credential-free: the vulnerability manager's gate runs it with no secrets.
 
 ## Tool schema invariants (don't regress)
 
@@ -38,7 +38,7 @@ Production is the shared Cloud Run service **`xero-mcp`** (GCP project `internal
 **Process:**
 1. Branch from `swiftotter/main`; push the branch to the **`swiftotter`** remote — not `origin` (that's the read-only XeroAPI upstream).
 2. Open a PR against `swiftotter/main`. Direct push to `main` is blocked.
-3. The merge is the deploy. A human merges (not automation).
+3. The merge is the deploy. A human merges everything **except Dependabot security fixes**, which the vulnerability manager (`swiftotter/vulnerability-manager`) merges automatically once its checks pass — including `npm test` and the smoke test in `.github/workflows/dependency-gate.yml` — and then confirms the Deploy succeeded.
 
 **Verify a deploy actually shipped** — don't trust "merged" alone:
 ```bash

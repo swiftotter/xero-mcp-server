@@ -20,6 +20,7 @@
     "watch": "tsc --watch",
     "lint:fix": "eslint --fix",
     "lint": "eslint .",
+    "smoke": "node scripts/smoke.mjs",
     "test": "npm run lint && npm run verify:deps && npm run verify:fs-guard && npm run verify:stateless && npm run verify:schemas && npm run verify:confirmation-gate && npm run verify:account-names && npm run verify:auth-recovery && npm run verify:claude-account",
     "verify:deps": "node scripts/verify-deps.mjs",
     "verify:fs-guard": "node scripts/verify-attachment-fs-guard.mjs",
