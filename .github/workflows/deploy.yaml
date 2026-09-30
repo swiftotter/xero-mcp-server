@@ -148,9 +148,22 @@ jobs:
     name: Roll out the shared xero-mcp service
     needs: build-and-push
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Room for a rollback: two rollouts plus two smoke runs. A timeout mid-smoke
+    # cancels the job, and failure() is false on cancel, so no rollback would run.
+    timeout-minutes: 20
     environment: production
     steps:
+      # For scripts/smoke-deploy.mjs only — dependency-free, so no npm ci.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
@@ -159,7 +172,38 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
+      # What to roll back to if the smoke test fails: the digest-pinned image of
+      # the revision serving right now. A failed lookup fails the job BEFORE the
+      # update — never deploy without a rollback target, since a silently empty
+      # one would skip the rollback and leave a bad deploy live.
+      - name: Record the currently serving image
+        id: prev
+        run: |
+          # The revision taking the most traffic, not latestReadyRevisionName:
+          # those differ if someone pinned traffic by hand.
+          SERVICE_JSON=$(gcloud run services describe "${SERVICE_NAME}" \
+            --project="${GCP_PROJECT}" \
+            --region="${GCP_REGION}" \
+            --format=json)
+          PREV_REVISION=$(jq -r '[.status.traffic[]? | select(.revisionName != null)] | max_by(.percent) | .revisionName // empty' <<<"${SERVICE_JSON}")
+          PREV_IMAGE=""
+          if [ -n "${PREV_REVISION}" ]; then
+            PREV_IMAGE=$(gcloud run revisions describe "${PREV_REVISION}" \
+              --project="${GCP_PROJECT}" \
+              --region="${GCP_REGION}" \
+              --format="value(spec.containers[0].image)")
+          fi
+          if [ -z "${PREV_IMAGE}" ]; then
+            echo "::warning::No serving revision found; this deploy has no rollback target."
+          fi
+          echo "Currently serving: ${PREV_REVISION:-none} ${PREV_IMAGE}"
+          {
+            echo "revision=${PREV_REVISION}"
+            echo "image=${PREV_IMAGE}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Update Cloud Run service to new image
+        id: update
         env:
           IMAGE: ${{ needs.build-and-push.outputs.image }}
         run: |
@@ -170,6 +214,7 @@ jobs:
             --quiet
 
       - name: Verify rollout
+        id: verify
         env:
           EXPECTED_IMAGE: ${{ needs.build-and-push.outputs.image }}
           EXPECTED_DIGEST: ${{ needs.build-and-push.outputs.digest }}
@@ -204,23 +249,69 @@ jobs:
             echo "::error::Latest ready revision is serving ${PERCENT}% of traffic, expected 100%"
             exit 1
           fi
-          STATUS=$(curl -fsS --retry 5 --retry-delay 5 --retry-connrefused --max-time 20 "${SERVICE_URL}/status")
-          echo "/status: ${STATUS}"
-          if ! jq -e '.status == "ok"' <<<"${STATUS}" >/dev/null; then
-            echo "::error::/status health check failed"
+          echo "url=${SERVICE_URL}" >> "$GITHUB_OUTPUT"
+
+      # /status alone proves only that Express started. Security updates
+      # auto-merge and deploy with nobody watching, so drive the public surface a
+      # dependency bump can break: OAuth metadata, /register, /authorize -> Xero,
+      # the JWT verifier on /mcp, /callback. No credentials; never reaches Xero.
+      - name: Smoke test the live service
+        id: smoke
+        env:
+          SERVICE_URL: ${{ steps.verify.outputs.url }}
+        # One retry before rolling back, so a transient network blip on the
+        # runner doesn't revert a good security fix.
+        run: |
+          if ! node scripts/smoke-deploy.mjs "${SERVICE_URL}"; then
+            echo "::warning::Smoke test failed; retrying once in 20s before rolling back."
+            sleep 20
+            node scripts/smoke-deploy.mjs "${SERVICE_URL}"
+          fi
+
+      # Only when the new revision actually took traffic (update succeeded) and a
+      # later check failed; if the revision never became ready, Cloud Run already
+      # left traffic on the old one. Redeploys the previous IMAGE rather than
+      # pinning traffic with update-traffic --to-revisions: a pin would leave
+      # every later deploy's revision at 0% and fail the 100%-traffic check above.
+      - name: Roll back to the previous image
+        id: rollback
+        if: ${{ failure() && steps.update.outcome == 'success' && steps.prev.outputs.image != '' }}
+        env:
+          PREV_IMAGE: ${{ steps.prev.outputs.image }}
+        run: |
+          echo "::warning::Rolling ${SERVICE_NAME} back to ${PREV_IMAGE}"
+          gcloud run services update "${SERVICE_NAME}" \
+            --project="${GCP_PROJECT}" \
+            --region="${GCP_REGION}" \
+            --image="${PREV_IMAGE}" \
+            --quiet
+          SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
+            --project="${GCP_PROJECT}" \
+            --region="${GCP_REGION}" \
+            --format="value(status.url)")
+          if ! node scripts/smoke-deploy.mjs "${SERVICE_URL}"; then
+            echo "::error::Rolled back to ${PREV_IMAGE}, but the smoke test still fails. Manual attention needed."
             exit 1
           fi
+          echo "::error::Deploy failed its checks and was rolled back to ${PREV_IMAGE}."
 
       - name: Rollout summary
         if: always()
         env:
           IMAGE: ${{ needs.build-and-push.outputs.image }}
           JOB_STATUS: ${{ job.status }}
+          SMOKE: ${{ steps.smoke.outcome }}
+          ROLLBACK: ${{ steps.rollback.outcome }}
+          PREV_IMAGE: ${{ steps.prev.outputs.image }}
         run: |
           {
             echo "## Rollout"
             echo ""
             echo "- **Service:** \`${SERVICE_NAME}\`"
             echo "- **Image:** \`${IMAGE}\`"
+            echo "- **Smoke test:** ${SMOKE}"
+            if [ "${ROLLBACK}" != "skipped" ]; then
+              echo "- **Rolled back to:** \`${PREV_IMAGE}\` (${ROLLBACK})"
+            fi
             echo "- **Status:** ${JOB_STATUS}"
           } >> "$GITHUB_STEP_SUMMARY"
