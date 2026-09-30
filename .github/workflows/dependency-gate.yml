@@ -2,7 +2,7 @@
 # merge anything while this file differs from templates/target-repo/.github/workflows/dependency-gate.yml
 # in that repo. Change it there, then copy it to every repo.
 #
-# It runs the PR's code (install, build, tests), so it has a read-only token and no secrets, and it never
+# It runs the PR's code (install, build, tests, smoke test), so it has a read-only token and no secrets, and it never
 # merges. The tamper check and the merge happen centrally in swiftotter/vulnerability-manager, which only
 # trusts this workflow's "gate" job result on the PR's exact head commit.
 name: Dependency gate
@@ -38,9 +38,16 @@ jobs:
             echo "::error::No test script, so nothing proves this update works. Add one before auto-merge."
             exit 1
           fi
+          if ! node -e "process.exit(require('./package.json').scripts?.smoke ? 0 : 1)"; then
+            echo "::error::No smoke script, so nothing proves the built server still starts and answers. Add one before auto-merge."
+            exit 1
+          fi
       - name: Install without running install scripts
         run: npm ci --ignore-scripts
       - name: Build
         run: npm run build --if-present
       - name: Test
         run: npm test
+      # Starts the built server with fake settings and no credentials and exercises it. This job has none to give.
+      - name: Smoke test
+        run: npm run smoke

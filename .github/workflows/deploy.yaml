@@ -153,14 +153,15 @@ jobs:
     timeout-minutes: 20
     environment: production
     steps:
-      # For scripts/smoke-deploy.mjs only — dependency-free, so no npm ci.
+      # For the smoke scripts below (dependency-free, so no npm ci). First, so its
+      # workspace clean can't touch the GCP credentials file the auth step writes.
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 20
 

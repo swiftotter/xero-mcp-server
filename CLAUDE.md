@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Xero MCP server (TypeScript). Build locally with `npm run build` (`src/` → `dist/`); lint with `npm run lint`. There is no test framework — verification is a set of `npm run verify:*` scripts under `scripts/` (`fs-guard`, `stateless`, `schemas`, `confirmation-gate`, `auth-recovery`, `smoke`), chained by `npm test`. Add to one of those when you add an invariant.
+Xero MCP server (TypeScript). Build locally with `npm run build` (`src/` → `dist/`); lint with `npm run lint`. There is no test framework — verification is a set of `npm run verify:*` scripts under `scripts/` (`fs-guard`, `stateless`, `schemas`, `confirmation-gate`, `auth-recovery`, `smoke`), which `npm test` runs with lint. Add to one of those when you add an invariant. `npm run smoke` (after a build) boots the **real** entrypoint and child with fake settings and no credentials and drives it as a fake user (initialize, all 60 tools listed, refusals, recovery); the vulnerability manager's gate runs it on every Dependabot PR, so keep it credential-free — the gate has no secrets to give. After every rollout, Deploy runs the no-token checks in `scripts/smoke-deploy.mjs` against production and rolls back on failure (see Deployment).
 
 ## Tool schema invariants (don't regress)
 
@@ -38,7 +38,7 @@ Production is the shared Cloud Run service **`xero-mcp`** (GCP project `internal
 **Process:**
 1. Branch from `swiftotter/main`; push the branch to the **`swiftotter`** remote — not `origin` (that's the read-only XeroAPI upstream).
 2. Open a PR against `swiftotter/main`. Direct push to `main` is blocked.
-3. The merge is the deploy. A human merges (not automation).
+3. The merge is the deploy. A human merges everything **except Dependabot security fixes**, which the vulnerability manager (`swiftotter/vulnerability-manager`) merges automatically once its checks pass — including `npm test` and the smoke test in `.github/workflows/dependency-gate.yml` — and then confirms the Deploy succeeded.
 
 **Post-deploy smoke + automatic rollback.** After the rollout, `deploy.yaml` runs `scripts/smoke-deploy.mjs` against the live URL — the public surface a dependency bump can break without failing the build (OAuth metadata, `/register`, `/authorize` → Xero with a trimmed app id, the JWT verifier on `/mcp`, `/callback`). It sends no credential and never reaches Xero. On failure it redeploys the image of the revision that was serving before (captured first), re-smokes it, and fails the job. It redeploys the image rather than `update-traffic --to-revisions`, because pinning traffic would leave every later deploy's revision at 0% and fail the 100%-traffic check. A rollback is itself a rollout, so it reopens the brief old/new instance overlap that `max-instances=1` otherwise prevents; that is the cost of not leaving a broken revision live. The same checks run pre-merge via `npm run verify:smoke` (in `npm test`, which is what the dependency gate trusts before auto-merging) and against the built image in CI's Docker job. Use `/status`, never `/healthz`, against Cloud Run: its frontend reserves paths ending in `z` and returns its own 404.
 
