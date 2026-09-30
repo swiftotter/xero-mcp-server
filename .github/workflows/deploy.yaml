@@ -225,7 +225,9 @@ jobs:
             --region="${GCP_REGION}" \
             --format=json)
           LATEST_REVISION=$(jq -r '.status.latestReadyRevisionName' <<<"${SERVICE_JSON}")
-          SERVICE_URL=$(jq -r '.status.url' <<<"${SERVICE_JSON}")
+          # The URL the service advertises (its PUBLIC_URL, set by scripts/deploy-shared.sh), not status.url:
+          # Cloud Run gives a service two valid URLs, and the smoke test checks the OAuth metadata names this one.
+          SERVICE_URL=$(jq -r '((.spec.template.spec.containers[0].env // []) | map(select(.name == "PUBLIC_URL")) | .[0].value) // .status.url' <<<"${SERVICE_JSON}")
           PERCENT=$(jq -r --arg rev "${LATEST_REVISION}" \
             '[.status.traffic[] | select(.revisionName == $rev or .latestRevision == true) | .percent] | add // 0' \
             <<<"${SERVICE_JSON}")
@@ -289,7 +291,7 @@ jobs:
           SERVICE_URL=$(gcloud run services describe "${SERVICE_NAME}" \
             --project="${GCP_PROJECT}" \
             --region="${GCP_REGION}" \
-            --format="value(status.url)")
+            --format=json | jq -r '((.spec.template.spec.containers[0].env // []) | map(select(.name == "PUBLIC_URL")) | .[0].value) // .status.url')
           if ! node scripts/smoke-deploy.mjs "${SERVICE_URL}"; then
             echo "::error::Rolled back to ${PREV_IMAGE}, but the smoke test still fails. Manual attention needed."
             exit 1
