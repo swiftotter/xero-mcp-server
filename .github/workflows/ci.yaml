@@ -90,6 +90,11 @@ jobs:
       - name: Verify write-confirmation gate
         run: npm run verify:confirmation-gate
 
+      # The post-deploy smoke checks (scripts/smoke-deploy.mjs), run against a
+      # local boot of the entrypoint, plus a check that they can fail at all.
+      - name: Verify post-deploy smoke checks
+        run: npm run verify:smoke
+
       # Xero returns only `accountCode` on line items — the name lives on the
       # separate chart-of-accounts resource. Every renderer must join against it
       # or output degrades to bare numbers ("2230") that mean nothing to a reader,
@@ -113,6 +118,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
       - name: Build container image (no push)
         run: docker build --pull -t xero-mcp-server:ci-${{ github.sha }} .
@@ -153,4 +163,13 @@ jobs:
             exit 1
           fi
           echo "Container is running and /healthz returns ok."
+          # The same checks the deploy job runs against production after every
+          # rollout, here against the built image before merge.
+          if ! SMOKE_PUBLIC_URL=http://localhost:8080 SMOKE_EXPECT_XERO_CLIENT_ID=ci-smoke \
+            node scripts/smoke-deploy.mjs "http://localhost:$PORT"; then
+            echo "::error::post-deploy smoke checks failed against the image"
+            docker logs "$CTR"
+            docker rm -f "$CTR"
+            exit 1
+          fi
           docker rm -f "$CTR"

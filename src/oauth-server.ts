@@ -22,6 +22,7 @@ import {
 } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import { mcpAuthRouter } from "@modelcontextprotocol/sdk/server/auth/router.js";
 import { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
+import { destroySupersededVersions } from "./clients/auth/token-recovery.js";
 import {
   OAuthClientInformationFull,
   OAuthTokens,
@@ -465,10 +466,22 @@ export class XeroChainedOAuthProvider implements OAuthServerProvider {
         throw e;
       }
     }
-    await this.config.secretManager.addSecretVersion({
+    const [created] = await this.config.secretManager.addSecretVersion({
       parent: secretName,
       payload: { data: Buffer.from(refreshToken, "utf8") },
     });
+
+    // Retire the versions this connect just superseded. Every reconnect lands a new
+    // version here and this path had no cleanup at all, so each one was a permanent
+    // monthly charge. Best effort and not awaited into the failure path: a connect that
+    // already stored its token must report success even if cleanup fails.
+    void destroySupersededVersions(
+      this.config.secretManager,
+      secretName,
+      created.name ?? null,
+    ).catch((e) =>
+      console.error("[oauth] persistXeroRefreshToken: cleanup failed", e),
+    );
   }
 
   private issueTokens(

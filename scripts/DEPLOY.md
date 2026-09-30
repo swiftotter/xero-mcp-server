@@ -68,19 +68,16 @@ The first deploy in a clean project uses `scripts/deploy-shared.sh` (it also pro
 
 ## Verifying a deploy worked
 
-After rolling, the smoke checks I run from a workstation (no Claude needed):
+The deploy workflow runs `scripts/smoke-deploy.mjs` against the live service after every rollout (OAuth metadata, `/register`, `/authorize` → Xero, the JWT verifier on `/mcp`, `/callback`) and, if it fails, redeploys the previously serving image and fails the job. Run the same checks from a workstation (no credentials, no Claude):
 
 ```bash
 URL=https://xero-mcp-1074937591843.us-central1.run.app
+npm run smoke:deploy -- $URL                                     # → All smoke checks passed.
+```
 
-# Open endpoints
-curl -sS $URL/status                                             # → {"status":"ok"}
-curl -sS $URL/.well-known/oauth-authorization-server | jq .      # → metadata document
-curl -sS $URL/.well-known/oauth-protected-resource/mcp | jq .    # → resource = $URL/mcp
+The smoke never calls Xero or a tool. For that, mint a JWT by hand:
 
-# Gated endpoints
-curl -sS -o /dev/null -w '%{http_code}\n' -X POST $URL/mcp       # → 401 (no auth)
-
+```bash
 # Full end-to-end with a hand-minted JWT (proves both signing and the
 # Streamable HTTP bridge to the stdio child)
 PROJECT=internal-mcps-496022
@@ -103,7 +100,7 @@ curl -sS -X POST $URL/mcp \
 # Expect: HTTP 200, SSE chunk containing `serverInfo: { name: "Xero MCP Server" }`
 ```
 
-If all four green, the new revision is healthy and Claude Desktop traffic will work.
+If both are green, the new revision is healthy and Claude Desktop traffic will work.
 
 ## Rotating credentials
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Smoke test: proves the BUILT server really works, as far as it can without a real user, Xero org, database
 // or credentials. The vulnerability manager's dependency gate runs it on every Dependabot PR (read-only, no
-// secrets), and Deploy runs it against production after every rollout.
+// secrets). After every rollout, Deploy runs scripts/smoke-deploy.mjs against production instead, because
+// its rollback is wired to that script; SMOKE_URL mode below is for checking a deployed server by hand.
 //
 //   npm run build && npm run smoke                        -> starts dist/cloud-run-entrypoint.js locally
 //   SMOKE_URL=https://xero-mcp-....run.app npm run smoke  -> checks a deployed server instead
@@ -13,8 +14,8 @@
 // that need none: health, OAuth discovery, and that unauthenticated and forged requests are refused.
 //
 // It never writes: the one write tool it calls has no confirm flag, so at most it may return a preview.
-// Node built-ins only (plus jsonwebtoken, already a dependency, and only in local mode), so the Deploy job
-// can run it without installing anything.
+// Node built-ins only (plus jsonwebtoken, already a dependency, and only in local mode), so SMOKE_URL mode
+// runs without installing anything.
 
 import { spawn } from "node:child_process";
 import { createHmac, randomBytes } from "node:crypto";
