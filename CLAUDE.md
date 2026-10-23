@@ -24,7 +24,11 @@ Xero MCP server (TypeScript). Build locally with `npm run build` (`src/` → `di
 
 Production is the shared Cloud Run service **`xero-mcp`** (GCP project `internal-mcps-496022`, region `us-central1`), at `https://xero-mcp-1074937591843.us-central1.run.app`.
 
-**How it deploys:** merging a PR into **`swiftotter/main`** triggers `.github/workflows/deploy.yaml`, which builds the Docker image **on the runner** and `docker push`es it to Artifact Registry (`us-central1-docker.pkg.dev/internal-mcps-496022/xero-mcp/server`), then rolls out Cloud Run. The image builds from `src/` (Docker runs `npm run build`), so **`dist/` is not committed**.
+**How it deploys:** merging a PR into **`swiftotter/main`** triggers `.github/workflows/deploy.yaml`, which builds the Docker image **on a GitHub-hosted runner** and `docker push`es it to Artifact Registry (`us-central1-docker.pkg.dev/internal-mcps-496022/xero-mcp/server`), reads back the image's **linux/amd64 manifest digest** with `scripts/image-platform-digest.sh`, and rolls out Cloud Run **by that digest** (`--image …/server@sha256:…`). Verify then compares it to the digest the new revision runs. The image builds from `src/` (Docker runs `npm run build`), so **`dist/` is not committed**.
+
+> Don't go back to `docker inspect … RepoDigests` for the digest. What it returns depends on the builder's Docker: a containerd image store (ubuntu-26.04, newer Docker) pushes a manifest *list* and reports the list's digest, while Cloud Run resolves the list and reports the platform manifest's, so Verify failed every deploy with the right image live. The resolver asks the registry and picks linux/amd64, which gives the same answer from any builder. CI runs it against the Dockerfile's base image, so a runner image missing `docker manifest` or `jq` fails a PR rather than a rollout.
+
+**GitHub-hosted runners, on purpose.** Xero is the deliberate exception to SwiftOtter's self-hosted-runner rule: the repo is public (a fork of XeroAPI), and our runner group refuses public repos. Its CI and Deploy run on `ubuntu-latest`, which can change Docker under it at any time, which is why the digest resolver exists.
 
 > Note: build on the runner + push to Artifact Registry — **not** `gcloud builds submit`. Cloud Build's source-staging upload fails in CI ("forbidden … serviceusage.services.use") regardless of SA roles; the runner build only needs `artifactregistry.writer`, which the deploy SA already has.
 
@@ -40,7 +44,7 @@ Production is the shared Cloud Run service **`xero-mcp`** (GCP project `internal
 2. Open a PR against `swiftotter/main`. Direct push to `main` is blocked.
 3. The merge is the deploy. A human merges everything **except Dependabot security fixes**, which the vulnerability manager (`swiftotter/vulnerability-manager`) merges automatically once its checks pass — including `npm test` and the smoke test in `.github/workflows/dependency-gate.yml` — and then confirms the Deploy succeeded.
 
-**Post-deploy smoke + automatic rollback.** After the rollout, `deploy.yaml` runs `scripts/smoke-deploy.mjs` against the live URL — the public surface a dependency bump can break without failing the build (OAuth metadata, `/register`, `/authorize` → Xero with a trimmed app id, the JWT verifier on `/mcp`, `/callback`). It sends no credential and never reaches Xero. On failure it redeploys the image of the revision that was serving before (captured first), re-smokes it, and fails the job. It redeploys the image rather than `update-traffic --to-revisions`, because pinning traffic would leave every later deploy's revision at 0% and fail the 100%-traffic check. A rollback is itself a rollout, so it reopens the brief old/new instance overlap that `max-instances=1` otherwise prevents; that is the cost of not leaving a broken revision live. The same checks run pre-merge via `npm run verify:smoke` (in `npm test`, which is what the dependency gate trusts before auto-merging) and against the built image in CI's Docker job. Use `/status`, never `/healthz`, against Cloud Run: its frontend reserves paths ending in `z` and returns its own 404.
+**Post-deploy smoke + automatic rollback.** After the rollout, `deploy.yaml` runs `scripts/smoke-deploy.mjs` against the live URL — the public surface a dependency bump can break without failing the build (OAuth metadata, `/register`, `/authorize` → Xero with a trimmed app id, the JWT verifier on `/mcp`, `/callback`). It sends no credential and never reaches Xero. On failure it redeploys the image of the revision that was serving before (captured first; Cloud Run stores it digest-pinned, so it is exactly what ran, whether that deploy went out by tag or by digest), re-smokes it, and fails the job. It redeploys the image rather than `update-traffic --to-revisions`, because pinning traffic would leave every later deploy's revision at 0% and fail the 100%-traffic check. A rollback is itself a rollout, so it reopens the brief old/new instance overlap that `max-instances=1` otherwise prevents; that is the cost of not leaving a broken revision live. The same checks run pre-merge via `npm run verify:smoke` (in `npm test`, which is what the dependency gate trusts before auto-merging) and against the built image in CI's Docker job. Use `/status`, never `/healthz`, against Cloud Run: its frontend reserves paths ending in `z` and returns its own 404.
 
 **Verify a deploy actually shipped** — don't trust "merged" alone:
 ```bash
@@ -49,11 +53,12 @@ gcloud run services describe xero-mcp --project=internal-mcps-496022 --region=us
 curl -s https://xero-mcp-1074937591843.us-central1.run.app/status   # -> {"status":"ok"}
 ```
 
-**Manual deploy (fallback, run as a project Owner):** same build-on-runner approach as CI — do **not** use `gcloud builds submit`.
+**Manual deploy (fallback, run as a project Owner):** same build-and-push approach as CI, deployed by digest — do **not** use `gcloud builds submit`. Needs `jq`.
 ```bash
 IMG=us-central1-docker.pkg.dev/internal-mcps-496022/xero-mcp/server:$(git rev-parse --short HEAD)
 gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
 docker build --platform=linux/amd64 -t "$IMG" .
 docker push "$IMG"
-gcloud run services update xero-mcp --project=internal-mcps-496022 --region=us-central1 --image="$IMG" --quiet
+DIGEST=$(scripts/image-platform-digest.sh "$IMG")
+gcloud run services update xero-mcp --project=internal-mcps-496022 --region=us-central1 --image="${IMG%:*}@${DIGEST}" --quiet
 ```

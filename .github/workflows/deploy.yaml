@@ -40,11 +40,15 @@ env:
 jobs:
   build-and-push:
     name: Build & push image
+    # GitHub-hosted on purpose (public repo; see CLAUDE.md). `ubuntu-latest` can
+    # change Docker under this job at any time, which is why the digest is read
+    # back from the registry (scripts/image-platform-digest.sh).
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: production
     outputs:
       image: ${{ steps.image-ref.outputs.image }}
+      registry: ${{ steps.image-ref.outputs.registry }}
       digest: ${{ steps.push.outputs.digest || steps.existing.outputs.digest }}
     steps:
       - name: Checkout
@@ -79,16 +83,19 @@ jobs:
             echo "registry=${REGISTRY}"
           } >> "$GITHUB_OUTPUT"
 
+      # Both paths read the image's digest from the registry, so both need auth.
+      - name: Configure Docker auth for Artifact Registry
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
       # inputs.image_tag is null on push events, and null == '' is true in
       # Actions expressions — so the build path runs on every push to main,
       # and only an explicit dispatch tag (rollback) skips it.
-      - name: Configure Docker auth for Artifact Registry
-        if: ${{ inputs.image_tag == '' }}
-        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
-
-      # The pushed digest is captured locally via docker inspect — the deploy
-      # SA cannot call `gcloud artifacts docker images describe` (it drags in
-      # containeranalysis.occurrences.list, which the SA lacks by design).
+      #
+      # The digest is read back from the registry (the deploy SA cannot call
+      # `gcloud artifacts docker images describe`: it drags in
+      # containeranalysis.occurrences.list, which the SA lacks by design), as the
+      # linux/amd64 manifest Cloud Run will run, not whatever the local Docker
+      # reports.
       - name: Build and push image
         if: ${{ inputs.image_tag == '' }}
         id: push
@@ -99,32 +106,24 @@ jobs:
           docker build --platform linux/amd64 -t "${IMAGE}" -t "${IMAGE_LATEST}" .
           docker push "${IMAGE}"
           docker push "${IMAGE_LATEST}"
-          PUSHED=$(docker inspect --format='{{index .RepoDigests 0}}' "${IMAGE}")
-          DIGEST="${PUSHED##*@}"
-          if [ -z "${DIGEST}" ] || [ "${DIGEST}" = "${PUSHED}" ]; then
-            echo "::error::could not determine pushed image digest from ${PUSHED}"
-            exit 1
-          fi
-          echo "Pushed digest: ${DIGEST}"
+          DIGEST=$(scripts/image-platform-digest.sh "${IMAGE}")
+          echo "Pushed digest (linux/amd64 manifest): ${DIGEST}"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify existing image
+      - name: Verify existing image (rollback path)
         if: ${{ inputs.image_tag != '' }}
         id: existing
         env:
-          REGISTRY: ${{ steps.image-ref.outputs.registry }}
-          TAG: ${{ steps.image-ref.outputs.tag }}
+          IMAGE: ${{ steps.image-ref.outputs.image }}
         run: |
-          set -o pipefail
-          DIGEST=$(gcloud artifacts docker images list "${REGISTRY}" \
-            --include-tags \
-            --filter="tags=${TAG}" \
-            --format="value(version)" | head -1)
-          if [ -z "${DIGEST}" ]; then
-            echo "::error::image tag ${TAG} not found in ${REGISTRY}"
+          # `gcloud artifacts docker images list` returns the TAG's digest, which
+          # for a manifest list is not the digest Cloud Run runs. Resolve it the
+          # same way as the build path so the verify step compares like with like.
+          if ! DIGEST=$(scripts/image-platform-digest.sh "${IMAGE}"); then
+            echo "::error::image ${IMAGE} not found or has no linux/amd64 manifest"
             exit 1
           fi
-          echo "Existing image digest: ${DIGEST}"
+          echo "Rolling back to ${IMAGE} (${DIGEST})"
           echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - name: Build summary
@@ -132,6 +131,7 @@ jobs:
           TAG: ${{ steps.image-ref.outputs.tag }}
           IMAGE: ${{ steps.image-ref.outputs.image }}
           INPUT_TAG: ${{ inputs.image_tag }}
+          DIGEST: ${{ steps.push.outputs.digest || steps.existing.outputs.digest }}
         run: |
           {
             if [ -n "${INPUT_TAG}" ]; then
@@ -142,6 +142,7 @@ jobs:
             echo ""
             echo "- **Tag:** \`${TAG}\`"
             echo "- **Image:** \`${IMAGE}\`"
+            echo "- **Digest (linux/amd64):** \`${DIGEST}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   rollout:
@@ -206,7 +207,9 @@ jobs:
       - name: Update Cloud Run service to new image
         id: update
         env:
-          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          # Deployed by digest, not tag: the revision runs exactly the manifest the
+          # Verify step expects, and a tag moved in between can't change it.
+          IMAGE: ${{ needs.build-and-push.outputs.registry }}@${{ needs.build-and-push.outputs.digest }}
         run: |
           gcloud run services update "${SERVICE_NAME}" \
             --project="${GCP_PROJECT}" \
@@ -235,9 +238,10 @@ jobs:
             --project="${GCP_PROJECT}" \
             --region="${GCP_REGION}" \
             --format="value(spec.containers[0].image)")
-          # Cloud Run pins revisions to the image digest, not the tag we
-          # deployed, so compare digests. EXPECTED_DIGEST comes from the build
-          # job (docker inspect / registry list) — the deploy SA cannot call
+          # Cloud Run pins revisions to the image digest, so compare digests.
+          # EXPECTED_DIGEST is the linux/amd64 manifest digest the build job read
+          # back from the registry (scripts/image-platform-digest.sh), which is
+          # also what the update step deployed by — the deploy SA cannot call
           # `gcloud artifacts docker images describe` here.
           LIVE_DIGEST="${LIVE_IMAGE##*@}"
           echo "Latest ready revision: ${LATEST_REVISION}"
@@ -276,6 +280,10 @@ jobs:
       # left traffic on the old one. Redeploys the previous IMAGE rather than
       # pinning traffic with update-traffic --to-revisions: a pin would leave
       # every later deploy's revision at 0% and fail the 100%-traffic check above.
+      # PREV_IMAGE is the previous revision's own image reference, which Cloud Run
+      # stores pinned to the digest it actually ran (…@sha256:…, the same field
+      # Verify reads), so this redeploys exactly that image whether the previous
+      # deploy went out by tag or by digest. No registry lookup, no Docker auth.
       - name: Roll back to the previous image
         id: rollback
         if: ${{ failure() && steps.update.outcome == 'success' && steps.prev.outputs.image != '' }}
@@ -301,7 +309,8 @@ jobs:
       - name: Rollout summary
         if: always()
         env:
-          IMAGE: ${{ needs.build-and-push.outputs.image }}
+          IMAGE: ${{ needs.build-and-push.outputs.registry }}@${{ needs.build-and-push.outputs.digest }}
+          TAG_IMAGE: ${{ needs.build-and-push.outputs.image }}
           JOB_STATUS: ${{ job.status }}
           SMOKE: ${{ steps.smoke.outcome }}
           ROLLBACK: ${{ steps.rollback.outcome }}
@@ -311,7 +320,8 @@ jobs:
             echo "## Rollout"
             echo ""
             echo "- **Service:** \`${SERVICE_NAME}\`"
-            echo "- **Image:** \`${IMAGE}\`"
+            echo "- **Image:** \`${TAG_IMAGE}\`"
+            echo "- **Deployed by digest:** \`${IMAGE}\`"
             echo "- **Smoke test:** ${SMOKE}"
             if [ "${ROLLBACK}" != "skipped" ]; then
               echo "- **Rolled back to:** \`${PREV_IMAGE}\` (${ROLLBACK})"
