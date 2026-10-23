@@ -35,7 +35,7 @@
   },
   "dependencies": {
     "@google-cloud/secret-manager": "^6.1.2",
-    "@modelcontextprotocol/sdk": "^1.26.0",
+    "@modelcontextprotocol/sdk": "^1.32.0",
     "axios": "^1.19.0",
     "dotenv": "^16.4.7",
     "express": "^5.2.1",
@@ -59,12 +59,12 @@
     "typescript-eslint": "^8.48.1"
   },
   "overrides": {
-    "hono": "^4.12.25",
+    "hono": "^4.13.11",
     "protobufjs": "^7.6.6",
     "form-data": "^4.0.6",
     "brace-expansion": "^2.1.7",
     "fast-uri": "^3.1.8",
-    "ip-address": "^10.3.1"
+    "ip-address": "^10.7.4"
   },
   "//overrides": [
     "Transitive-only security patches for HIGH advisories that fail CI's",
@@ -88,7 +88,11 @@
     "NOT 4.x \u2014 published, but ajv would not accept a major.",
     "",
     "ip-address: @modelcontextprotocol/sdk -> express-rate-limit, which declares ^10.2.0.",
-    "SSRF / trust-boundary advisories cover <=10.3.0, so the floor is 10.3.1.",
+    "SSRF / trust-boundary advisories cover <=10.3.0, and a later one (GHSA-rxp7-6hxx-x8q5,",
+    "Oct 2026) covers <=10.7.3, so the floor is 10.7.4.",
+    "",
+    "hono: @modelcontextprotocol/sdk and @hono/node-server. The serveStatic double-decode",
+    "advisory (GHSA-5r4p-p66f-jhc7) covers 4.12.4 - 4.13.10, so the floor is 4.13.11.",
     "",
     "axios is NOT here: it is a direct dependency now. src/clients/xero-client.ts,",
     "auth/authorization-code-xero-client.ts and helpers/format-error.ts all import it, so",
