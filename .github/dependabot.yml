@@ -16,12 +16,12 @@ updates:
     labels:
       - "dependencies"
     groups:
-      # Batch ALL security advisories into one PR per run. Critical: CI's
-      # npm audit gate is all-or-nothing, but Dependabot otherwise opens one
-      # PR per advisory — so no single PR can ever turn CI green while other
-      # advisories remain. Grouping security fixes lets them clear the gate
-      # together and auto-merge. (applies-to: security-updates is separate
-      # from the version-update groups below.)
+      # Batch security advisories into one PR per run. This only groups
+      # advisories present in the SAME run; ones that land on different days
+      # still get one PR each, which is why CI's PR audit fails only on
+      # advisories a PR introduces (scripts/audit-new-advisories.mjs).
+      # (applies-to: security-updates is separate from the version-update
+      # groups below.)
       security:
         applies-to: security-updates
         patterns: ["*"]

@@ -23,6 +23,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # Full history so the PR audit below can read the base branch's lockfile.
+          fetch-depth: 0
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -47,7 +49,15 @@ jobs:
         # block a security deploy — they still get Dependabot PRs for
         # visibility. Also avoids the all-or-nothing deadlock where one
         # dev-tool advisory with no fix wedges every PR red.
-        run: npm audit --omit=dev --audit-level=high
+        #
+        # Pull requests fail only on HIGH+ advisories they introduce (see the script's
+        # header for why); pushes to main keep the whole-tree audit.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            node scripts/audit-new-advisories.mjs   # base: origin/$GITHUB_BASE_REF
+          else
+            npm audit --omit=dev --audit-level=high
+          fi
 
       # Enforce the hosted-deployment filesystem guard so a future refactor
       # (renaming the disable flag, simplifying childEnv) can't silently reopen
@@ -102,6 +112,11 @@ jobs:
       # output stays well-formed, just unreadable. Hence an explicit guard.
       - name: Verify GL accounts render by name
         run: npm run verify:account-names
+
+      # The PR-time audit above must block new advisories, pass ones already on base,
+      # and fail closed on an unusable npm report.
+      - name: Verify PR audit gate
+        run: npm run verify:audit-gate
 
       # Writes are refused unless the connected Xero user is a dedicated Claude
       # account. Dropping the wrapper from a write path fails nothing else —
