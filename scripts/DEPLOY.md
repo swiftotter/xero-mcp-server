@@ -27,16 +27,16 @@ For the *user-facing* onboarding flow (what teammates do once the service is liv
   - Redirect URI: `https://xero-mcp-1074937591843.us-central1.run.app/callback`
   - Granular accounting scopes only (see [granular scopes FAQ](https://developer.xero.com/faq/granular-scopes))
 - **Cloud Run knobs:** `min-instances=1` (prevents cold-start state loss), `max-instances=4`, `concurrency=80`, 1 vCPU, 1Gi memory, 3600 s timeout
-- **GitHub Actions:** `.github/workflows/ci.yaml` runs on PRs (lint + build + Docker smoke). `.github/workflows/deploy.yaml` runs on push to `main` (Cloud Build + `gcloud run services update`).
+- **GitHub Actions:** `.github/workflows/ci.yaml` runs on PRs (lint + build + Docker smoke). `.github/workflows/deploy.yaml` runs on push to `main` (build on a GitHub-hosted runner, push to Artifact Registry, `gcloud run services update` by digest, smoke + automatic rollback).
 
 ## Deploying an update
 
 **The happy path (CI):**
 1. Open a PR. CI lints + builds + Docker-smoke-tests the image.
 2. Squash-merge into `main`.
-3. `deploy.yaml` fires automatically: Cloud Build pushes a new image tagged with the commit SHA, retags as `:latest`, runs `gcloud run services update xero-mcp --image=...:latest`. The service rolls in seconds.
+3. `deploy.yaml` fires automatically on a GitHub-hosted runner: it builds the image, pushes it tagged with the commit SHA and `:latest`, reads back the image's linux/amd64 manifest digest (`scripts/image-platform-digest.sh`), runs `gcloud run services update xero-mcp --image=...@sha256:<digest>`, checks the new revision runs that digest with 100% of traffic, and smoke-tests it (rolling back on failure). Rollback by hand: run the workflow via `workflow_dispatch` with `image_tag` set to a prior tag (skips the build).
 
-**Caveat:** the workflows are pinned to `runs-on: [self-hosted, Linux, X64]`. If `swiftotter/xero-mcp-server` isn't in the SwiftOtter self-hosted runner group, the runs sit queued. Either get the repo added to the runner group or temporarily change the workflows to `runs-on: ubuntu-latest`.
+**Runners:** both workflows run on GitHub-hosted `ubuntu-latest` on purpose. The repo is public (a fork of XeroAPI) and the SwiftOtter self-hosted runner group refuses public repos (see CLAUDE.md). `ubuntu-latest` can change Docker at any time, so the deploy reads the image's digest back from the registry rather than trusting the runner's Docker.
 
 **The manual path** (when CI isn't ready or you need to ship hot):
 
