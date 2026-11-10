@@ -139,6 +139,13 @@ jobs:
         with:
           node-version: 20
 
+      # Deploy reads the pushed image's digest with this script (docker manifest
+      # inspect + jq). Run it here against the public base image so a runner
+      # image that lacks either tool, or changes their output, fails a PR rather
+      # than a production rollout.
+      - name: Check the deploy's digest resolver on this runner
+        run: scripts/image-platform-digest.sh "$(sed -nE 's/^FROM[[:space:]]+(--platform=[^[:space:]]+[[:space:]]+)?([^[:space:]]+).*/\2/p' Dockerfile | tail -1)"
+
       - name: Build container image (no push)
         run: docker build --pull -t xero-mcp-server:ci-${{ github.sha }} .
 
@@ -154,7 +161,10 @@ jobs:
           # Boot the container with fake env, confirm:
           #   1. it stays running for >5s
           #   2. /healthz responds 200 (proves the express server is up)
-          docker run -d --name "$CTR" -p 0:8080 \
+          # Loopback only: the fake-credentialed container has no reason to be
+          # reachable from the network. Probed at 127.0.0.1, not localhost,
+          # which can resolve to ::1 first and miss an IPv4-only bind.
+          docker run -d --name "$CTR" -p 127.0.0.1:0:8080 \
             -e PUBLIC_URL=http://localhost:8080 \
             -e GCP_PROJECT=ci-smoke \
             -e XERO_APP_CLIENT_ID=ci-smoke \
@@ -171,7 +181,7 @@ jobs:
             docker rm -f "$CTR"
             exit 1
           fi
-          if ! curl -fsS --max-time 5 http://localhost:$PORT/healthz | grep -q '"ok"'; then
+          if ! curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/healthz" | grep -q '"ok"'; then
             echo "::error::/healthz did not return ok"
             docker logs "$CTR"
             docker rm -f "$CTR"
@@ -181,7 +191,7 @@ jobs:
           # The same checks the deploy job runs against production after every
           # rollout, here against the built image before merge.
           if ! SMOKE_PUBLIC_URL=http://localhost:8080 SMOKE_EXPECT_XERO_CLIENT_ID=ci-smoke \
-            node scripts/smoke-deploy.mjs "http://localhost:$PORT"; then
+            node scripts/smoke-deploy.mjs "http://127.0.0.1:$PORT"; then
             echo "::error::post-deploy smoke checks failed against the image"
             docker logs "$CTR"
             docker rm -f "$CTR"
